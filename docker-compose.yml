@@ -1,0 +1,11 @@
+services:
+  dcmigration:
+    build: .
+    container_name: dcmigration
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Istanbul

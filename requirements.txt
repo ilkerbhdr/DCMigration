@@ -1,0 +1,6 @@
+flask
+netmiko
+openpyxl
+requests
+gunicorn
+gevent

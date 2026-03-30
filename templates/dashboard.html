@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — DC Migration</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/migration/static/style.css">
+    <style>
+        .wh-name { font-weight: 600; color: var(--color-text); }
+        .wh-url { font-size: 12px; color: var(--color-text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .wh-type { font-size: 11px; background: var(--color-accent-light); color: var(--color-accent); padding: 2px 8px; border-radius: var(--radius-full); font-weight: 600; }
+        .webhook-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--color-bg); border: 1px solid var(--color-border-light); border-radius: var(--radius-md); font-size: 13px; margin-bottom: 8px; transition: border-color var(--transition); }
+        .webhook-item:hover { border-color: var(--color-border); }
+        .webhook-actions { display: flex; gap: 4px; margin-left: auto; }
+        .baseline-list { display: flex; flex-direction: column; gap: 8px; }
+        .baseline-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--color-bg); border: 1px solid var(--color-border-light); border-radius: var(--radius-md); font-size: 13px; transition: border-color var(--transition); }
+        .baseline-item:hover { border-color: var(--color-border); }
+        .baseline-item.selected { border-color: var(--color-accent); background: var(--color-accent-bg); }
+        .baseline-item label { cursor: pointer; display: flex; align-items: center; gap: 6px; flex: 1; }
+        .baseline-meta { font-size: 11px; color: var(--color-text-muted); }
+        .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .dot-green { background: var(--color-success); }
+        .dot-red { background: var(--color-danger); }
+        .dot-gray { background: var(--color-text-muted); }
+        .sw-card.error { border-color: #fecaca; background: var(--color-danger-light); }
+    </style>
+</head>
+<body>
+    <script src="/migration/static/common.js"></script>
+    <script>document.body.insertAdjacentHTML('afterbegin', renderTopbar('dashboard'));</script>
+
+    <div class="page">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Dashboard</h1>
+                <p class="page-subtitle">DC Migration — Genel Bakis</p>
+            </div>
+        </div>
+
+        <!-- Switch Ozeti -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
+                    Switch Ozeti
+                    <span class="card-badge" id="swCount">0 switch</span>
+                </span>
+                <button class="btn btn-primary" id="summaryBtn" onclick="fetchSummary()">Ozet Al</button>
+            </div>
+            <!-- Switch Grup Secici -->
+            <div class="flex items-center gap-sm mb-sm flex-wrap">
+                <select class="form-select" id="groupSelect" onchange="onGroupSelect()" style="flex:1;max-width:300px;">
+                    <option value="">-- Switch Grubu Sec --</option>
+                </select>
+                <button class="btn btn-sm btn-ghost" onclick="saveCurrentAsGroup()" title="Mevcut listeyi grup olarak kaydet">Grubu Kaydet</button>
+                <button class="btn btn-sm btn-ghost" onclick="deleteSelectedGroup()" title="Secili grubu sil" id="deleteGroupBtn" style="display:none;">Grubu Sil</button>
+                <span class="help-text">veya manuel ekleyin:</span>
+            </div>
+            <div id="dashSwitches"></div>
+            <button class="btn btn-flat btn-block mt-sm" onclick="addDashSwitch(); saveDashSwitches();">+ Switch Ekle</button>
+            <div id="lastRefresh" class="help-text mt-sm" style="display:none;"></div>
+            <div id="summaryResult" class="mt-md"></div>
+        </div>
+
+        <div class="two-col">
+            <!-- Baseline Yonetimi -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
+                        Baseline Yonetimi
+                        <span class="card-badge" id="baselineCount">0</span>
+                    </span>
+                </div>
+                <!-- Baseline kaydet bar -->
+                <div id="baselineSaveBar" class="alert alert-info hidden">
+                    <div class="flex items-center gap-sm" style="flex-wrap:wrap; width:100%;">
+                        <span>Son toplanan veri mevcut</span>
+                        <span class="help-text" id="baselineSaveInfo"></span>
+                        <input type="text" id="baselineLabelInput" class="form-input" placeholder="Etiket (or: Tasima Oncesi)" style="flex:1; min-width:180px; padding:6px 10px; font-size:12px;">
+                        <button class="btn btn-sm btn-primary" onclick="saveBaselineFromSession()">Baseline Kaydet</button>
+                    </div>
+                </div>
+                <div id="baselineList" class="baseline-list">
+                    <span class="help-text">Yukleniyor...</span>
+                </div>
+                <div class="flex items-center gap-sm mt-md">
+                    <button class="btn btn-sm btn-primary" onclick="diffBaselines()">Karsilastir</button>
+                    <span class="help-text">2 baseline secin</span>
+                </div>
+                <div id="diffResult" class="mt-md"></div>
+            </div>
+
+            <!-- Webhook Ayarlari -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+                        Webhook Ayarlari
+                        <span class="card-badge" id="webhookCount">0</span>
+                    </span>
+                </div>
+                <div id="webhookList"></div>
+                <div style="margin-top:12px; padding:14px; background:var(--color-bg); border:1px solid var(--color-border-light); border-radius:var(--radius-md);">
+                    <div class="form-label" style="margin-bottom:10px;">Yeni Webhook</div>
+                    <div style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+                        <div class="form-group" style="min-width:120px;">
+                            <label class="form-label">Ad</label>
+                            <input type="text" id="whName" class="form-input" placeholder="ops-team">
+                        </div>
+                        <div class="form-group" style="flex:1; min-width:200px;">
+                            <label class="form-label">URL</label>
+                            <input type="text" id="whUrl" class="form-input" placeholder="https://hooks.teams.microsoft.com/...">
+                        </div>
+                        <div class="form-group" style="min-width:100px;">
+                            <label class="form-label">Tip</label>
+                            <select id="whType" class="form-select">
+                                <option value="teams">Teams</option>
+                                <option value="slack">Slack</option>
+                                <option value="generic">Generic</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-sm btn-primary" onclick="addWebhook()" style="height:36px;">Ekle</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audit Log -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    Audit Log
+                    <span class="card-badge" id="auditCount">0</span>
+                </span>
+                <button class="btn btn-sm btn-danger" onclick="clearAuditLog()">Temizle</button>
+            </div>
+            <div class="flex items-center gap-sm mb-sm" style="flex-wrap:wrap;">
+                <div class="filter-group" id="auditFilters"></div>
+            </div>
+            <div class="table-wrap">
+                <div class="table-scroll" style="max-height:400px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Zaman</th><th>Tip</th><th>Detay</th></tr>
+                        </thead>
+                        <tbody id="auditBody">
+                            <tr><td colspan="3" class="text-center text-muted" style="padding:20px;">Yukleniyor...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== STATE ====================
+        let profiles = [];
+        let baselines = [];
+        let webhooks = [];
+        let auditLog = [];
+        let auditFilter = '';
+        let selectedBaselines = [];
+
+        // ==================== PROFILES ====================
+        async function loadProfiles() {
+            try {
+                const res = await fetch('/migration/api/profiles');
+                profiles = await res.json();
+            } catch { profiles = []; }
+            updateAllProfileSelects();
+        }
+
+        function getProfileOptions() {
+            let opts = '<option value="">-- Profil Sec --</option>';
+            profiles.forEach(p => {
+                opts += `<option value="${esc(p.name)}">${esc(p.name)} (${esc(p.username)})</option>`;
+            });
+            return opts;
+        }
+
+        function updateAllProfileSelects() {
+            const opts = getProfileOptions();
+            document.querySelectorAll('.dash-profile').forEach(sel => {
+                const cur = sel.value;
+                sel.innerHTML = opts;
+                sel.value = cur;
+            });
+        }
+
+        // ==================== SWITCH ROWS (Kalıcı) ====================
+        function addDashSwitch(host='', profile='', port='') {
+            const container = document.getElementById('dashSwitches');
+            const row = document.createElement('div');
+            row.className = 'entry-row';
+            row.innerHTML = `
+                <div class="form-group">
+                    <label class="form-label">IP / Range</label>
+                    <input type="text" class="form-input dash-host" placeholder="192.168.1.10-15, 192.168.1.20-25" value="${esc(host)}" onchange="saveDashSwitches()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Profil</label>
+                    <select class="form-select dash-profile" onchange="saveDashSwitches()">${getProfileOptions()}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Port</label>
+                    <input type="number" class="form-input dash-port" placeholder="22" min="1" max="65535" value="${esc(String(port))}" onchange="saveDashSwitches()">
+                </div>
+                <button class="btn-remove" onclick="this.closest('.entry-row').remove(); updateSwCount(); saveDashSwitches();" title="Kaldir">&times;</button>
+            `;
+            container.appendChild(row);
+            if (profile) {
+                const sel = row.querySelector('.dash-profile');
+                sel.value = profile;
+            }
+            updateSwCount();
+        }
+
+        function updateSwCount() {
+            const count = document.querySelectorAll('#dashSwitches .entry-row').length;
+            document.getElementById('swCount').textContent = count + ' switch';
+        }
+
+        function getDashSwitchList() {
+            const rows = document.querySelectorAll('#dashSwitches .entry-row');
+            const list = [];
+            rows.forEach(row => {
+                const host = row.querySelector('.dash-host').value.trim();
+                const profile = row.querySelector('.dash-profile').value;
+                const port = row.querySelector('.dash-port') ? row.querySelector('.dash-port').value : '';
+                if (host) list.push({ host, profile, port });
+            });
+            return list;
+        }
+
+        async function saveDashSwitches() {
+            const list = getDashSwitchList();
+            try {
+                await fetch('/migration/api/settings/dashboard_switches', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: list }),
+                });
+            } catch (e) {}
+        }
+
+        async function loadDashSwitches() {
+            try {
+                const res = await fetch('/migration/api/settings/dashboard_switches');
+                const data = await res.json();
+                const list = data.value || [];
+                if (list.length > 0) {
+                    for (const sw of list) {
+                        addDashSwitch(sw.host || '', sw.profile || '', sw.port || '');
+                    }
+                    return true;
+                }
+            } catch (e) {}
+            return false;
+        }
+
+        // ==================== SWITCH GROUPS ====================
+        async function loadGroups() {
+            await loadSwitchGroups();
+            renderGroupSelect();
+        }
+
+        function renderGroupSelect() {
+            document.getElementById('groupSelect').innerHTML = getSwitchGroupOptions();
+            document.getElementById('deleteGroupBtn').style.display = 'none';
+        }
+
+        function onGroupSelect() {
+            const sel = document.getElementById('groupSelect');
+            const name = sel.value;
+            document.getElementById('deleteGroupBtn').style.display = name ? 'inline-flex' : 'none';
+            if (!name) return;
+
+            const group = getSwitchGroupByName(name);
+            if (!group) return;
+
+            // Mevcut satırları temizle
+            document.getElementById('dashSwitches').innerHTML = '';
+
+            // Gruptaki switch'leri ekle
+            for (const sw of group.switches) {
+                addDashSwitch(sw.host || '', sw.profile || '', sw.port || '');
+            }
+            saveDashSwitches();
+        }
+
+        async function saveCurrentAsGroup() {
+            const list = getDashSwitchList();
+            if (list.length === 0) {
+                alert('Kaydedilecek switch yok. Once switch ekleyin.');
+                return;
+            }
+
+            const name = prompt('Grup adi girin (orn: 4.Kat Spine Switchleri):');
+            if (!name || !name.trim()) return;
+
+            try {
+                const res = await fetch('/migration/api/switch-groups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name.trim(), switches: list }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    _switchGroups = data.groups || [];
+                    renderGroupSelect();
+                    document.getElementById('groupSelect').value = name.trim();
+                    document.getElementById('deleteGroupBtn').style.display = 'inline-flex';
+                    alert('Grup kaydedildi: ' + name.trim());
+                } else {
+                    alert('Hata: ' + (data.error || 'Bilinmeyen'));
+                }
+            } catch (err) {
+                alert('Grup kayit hatasi: ' + err.message);
+            }
+        }
+
+        async function deleteSelectedGroup() {
+            const sel = document.getElementById('groupSelect');
+            const name = sel.value;
+            if (!name) return;
+            if (!confirm(`"${name}" grubunu silmek istediginize emin misiniz?`)) return;
+
+            try {
+                const res = await fetch('/migration/api/switch-groups/' + encodeURIComponent(name), { method: 'DELETE' });
+                const data = await res.json();
+                _switchGroups = data.groups || [];
+                renderGroupSelect();
+                alert('Grup silindi.');
+            } catch (err) {
+                alert('Silme hatasi: ' + err.message);
+            }
+        }
+
+        // ==================== SUMMARY ====================
+        async function fetchSummary() {
+            const rows = document.querySelectorAll('#dashSwitches .entry-row');
+            const switches = [];
+            rows.forEach(row => {
+                const host = row.querySelector('.dash-host').value.trim();
+                const profile = row.querySelector('.dash-profile').value;
+                const port = row.querySelector('.dash-port') ? row.querySelector('.dash-port').value : '';
+                if (host) switches.push({ host, profile, port });
+            });
+
+            if (switches.length === 0) {
+                alert('En az bir switch IP giriniz.');
+                return;
+            }
+
+            const btn = document.getElementById('summaryBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Yukleniyor...';
+            document.getElementById('summaryResult').innerHTML = '';
+
+            try {
+                const res = await fetch('/migration/api/dashboard/summary', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ switches }),
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    document.getElementById('summaryResult').innerHTML =
+                        `<div class="alert alert-error">${esc(data.error)}</div>`;
+                    return;
+                }
+
+                // Backend direkt dizi dondurur
+                const results = Array.isArray(data) ? data : (data.results || []);
+                renderSummary(results);
+
+                // Sonuclari DB'ye kaydet (sayfa yenilenince geri yuklensin)
+                try {
+                    await fetch('/migration/api/settings/dashboard_summary', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ value: { results, timestamp: new Date().toISOString() } }),
+                    });
+                } catch (e) {}
+            } catch (err) {
+                document.getElementById('summaryResult').innerHTML =
+                    `<div class="alert alert-error">Baglanti hatasi: ${esc(err.message)}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Ozet Al';
+                const lr = document.getElementById('lastRefresh');
+                lr.style.display = 'block';
+                lr.textContent = 'Son guncelleme: ' + new Date().toLocaleString('tr-TR') + ' — Sonraki otomatik: 1 saat sonra';
+            }
+        }
+
+        // Saatlik otomatik yenileme
+        let _autoRefreshInterval = null;
+        function startAutoRefresh() {
+            if (_autoRefreshInterval) clearInterval(_autoRefreshInterval);
+            _autoRefreshInterval = setInterval(() => {
+                const rows = document.querySelectorAll('#dashSwitches .entry-row');
+                if (rows.length > 0) {
+                    console.log('[Dashboard] Otomatik yenileme tetiklendi');
+                    fetchSummary();
+                }
+            }, 60 * 60 * 1000); // 1 saat
+        }
+
+        function renderSummary(results) {
+            const container = document.getElementById('summaryResult');
+            if (results.length === 0) {
+                container.innerHTML = '<div class="alert alert-warning">Sonuc bulunamadi.</div>';
+                return;
+            }
+
+            let html = '<div class="summary-grid">';
+            for (const sw of results) {
+                const hasError = sw.status === 'error';
+                const s = sw.summary || {};
+                const total = s.total || 0;
+                const connected = s.connected || 0;
+                const notconnect = s.notconnect || 0;
+                const disabled = s.disabled || 0;
+                const pct = total > 0 ? Math.round((connected / total) * 100) : 0;
+
+                html += `<div class="sw-card${hasError ? ' error' : ''}">
+                    <div class="flex justify-between items-center mb-sm">
+                        <span style="font-size:13px; font-weight:600; color:var(--color-text);">${esc(sw.hostname || sw.host || '—')}</span>
+                        <span class="help-text">${esc(sw.host || '')}</span>
+                    </div>`;
+
+                if (hasError) {
+                    html += `<div class="alert alert-error" style="margin:0;padding:6px 10px;">${esc(sw.error)}</div>`;
+                } else {
+                    html += `<div class="flex gap-md mb-sm" style="font-size:12px;">
+                        <span>Toplam: <strong>${total}</strong></span>
+                        <span><span class="dot dot-green"></span> ${connected}</span>
+                        <span><span class="dot dot-red"></span> ${notconnect}</span>
+                        <span><span class="dot dot-gray"></span> ${disabled}</span>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" style="width:${pct}%"></div>
+                    </div>
+                    <div class="help-text mt-sm">${pct}% connected</div>`;
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // ==================== BASELINES ====================
+        async function loadBaselines() {
+            try {
+                const res = await fetch('/migration/api/baseline/list');
+                baselines = await res.json();
+            } catch { baselines = []; }
+            renderBaselines();
+        }
+
+        function renderBaselines() {
+            const list = document.getElementById('baselineList');
+            document.getElementById('baselineCount').textContent = baselines.length;
+            selectedBaselines = [];
+
+            if (baselines.length === 0) {
+                list.innerHTML = '<span class="help-text">Kayitli baseline yok.</span>';
+                return;
+            }
+
+            let html = '';
+            baselines.forEach((b, i) => {
+                const ts = b.timestamp ? new Date(b.timestamp).toLocaleString('tr-TR') : '—';
+                const summary = b.summary
+                    ? `T:${b.summary.total || 0} C:${b.summary.connected || 0} N:${b.summary.notconnect || 0}`
+                    : '';
+                html += `<div class="baseline-item" id="bl-${i}">
+                    <label>
+                        <input type="checkbox" onchange="toggleBaseline(${i})" value="${i}">
+                        <strong>${esc(b.label || ('Baseline #' + b.id))}</strong>
+                    </label>
+                    <span class="baseline-meta">${ts}</span>
+                    <span class="baseline-meta">${summary}</span>
+                    <button class="btn btn-sm btn-danger btn-icon" onclick="deleteBaseline(${b.id})" title="Sil">&times;</button>
+                </div>`;
+            });
+            list.innerHTML = html;
+        }
+
+        function toggleBaseline(idx) {
+            const pos = selectedBaselines.indexOf(idx);
+            if (pos >= 0) {
+                selectedBaselines.splice(pos, 1);
+                document.getElementById('bl-' + idx).classList.remove('selected');
+            } else {
+                if (selectedBaselines.length >= 2) {
+                    const old = selectedBaselines.shift();
+                    document.getElementById('bl-' + old).classList.remove('selected');
+                    document.getElementById('bl-' + old).querySelector('input').checked = false;
+                }
+                selectedBaselines.push(idx);
+                document.getElementById('bl-' + idx).classList.add('selected');
+            }
+            updateBaselineOrderBadges();
+        }
+
+        function updateBaselineOrderBadges() {
+            document.querySelectorAll('.bl-order-badge').forEach(b => b.remove());
+            selectedBaselines.forEach((idx, order) => {
+                const el = document.getElementById('bl-' + idx);
+                if (!el) return;
+                const label = el.querySelector('label');
+                const badge = document.createElement('span');
+                badge.className = 'bl-order-badge';
+                badge.style.cssText = 'display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;margin-left:6px;' +
+                    (order === 0 ? 'background:#dbeafe;color:#1d4ed8;' : 'background:#fef3c7;color:#92400e;');
+                badge.textContent = order === 0 ? '1. Oncesi' : '2. Sonrasi';
+                label.appendChild(badge);
+            });
+        }
+
+        async function deleteBaseline(baselineId) {
+            if (!confirm('Bu baseline silinsin mi?')) return;
+            try {
+                await fetch('/migration/api/baseline/' + baselineId, { method: 'DELETE' });
+                loadBaselines();
+            } catch (err) {
+                alert('Silme hatasi: ' + err.message);
+            }
+        }
+
+        async function diffBaselines() {
+            if (selectedBaselines.length !== 2) {
+                alert('Lutfen 2 baseline secin.');
+                return;
+            }
+            const b1 = baselines[selectedBaselines[0]];
+            const b2 = baselines[selectedBaselines[1]];
+            const diffResult = document.getElementById('diffResult');
+            diffResult.innerHTML = '<span class="help-text">Karsilastiriliyor...</span>';
+
+            try {
+                const res = await fetch('/migration/api/baseline/diff', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id1: b1.id,
+                        id2: b2.id,
+                    }),
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    diffResult.innerHTML = `<div class="alert alert-error">${esc(data.error)}</div>`;
+                    return;
+                }
+
+                renderDiff(data);
+            } catch (err) {
+                diffResult.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
+            }
+        }
+
+        function renderDiff(data) {
+            const container = document.getElementById('diffResult');
+            const changes = data.changes || [];
+            const topoChanges = data.topology_changes || [];
+
+            if (changes.length === 0 && topoChanges.length === 0) {
+                container.innerHTML = '<div class="alert alert-success">Fark bulunamadi.</div>';
+                return;
+            }
+
+            let html = '';
+            if (changes.length > 0) {
+                html += `<div class="alert alert-info">${changes.length} port degisikligi</div>`;
+                html += '<div class="table-wrap"><div class="table-scroll" style="max-height:250px;"><table class="data-table"><thead><tr><th>Switch</th><th>Port</th><th>Tip</th><th>Detay</th></tr></thead><tbody>';
+                for (const c of changes) {
+                    html += `<tr>
+                        <td>${esc(c.switch || c.host || '')}</td>
+                        <td><strong>${esc(c.port || '')}</strong></td>
+                        <td>${esc(c.type || '')}</td>
+                        <td>${esc(c.detail || c.description || '')}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table></div></div>';
+            }
+
+            if (topoChanges.length > 0) {
+                html += `<div class="alert alert-warning mt-sm">Topoloji degisiklikleri (${topoChanges.length})</div>`;
+                html += '<div class="table-wrap"><div class="table-scroll" style="max-height:200px;"><table class="data-table"><thead><tr><th>Switch</th><th>Port</th><th>Tip</th><th>Detay</th></tr></thead><tbody>';
+                for (const c of topoChanges) {
+                    html += `<tr>
+                        <td>${esc(c.switch || c.host || '')}</td>
+                        <td><strong>${esc(c.port || '')}</strong></td>
+                        <td>${esc(c.type || '')}</td>
+                        <td>${esc(c.detail || '')}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table></div></div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        // ==================== WEBHOOKS ====================
+        async function loadWebhooks() {
+            try {
+                const res = await fetch('/migration/api/webhooks');
+                webhooks = await res.json();
+            } catch { webhooks = []; }
+            renderWebhooks();
+        }
+
+        function renderWebhooks() {
+            const list = document.getElementById('webhookList');
+            document.getElementById('webhookCount').textContent = webhooks.length;
+
+            if (webhooks.length === 0) {
+                list.innerHTML = '<span class="help-text">Kayitli webhook yok.</span>';
+                return;
+            }
+
+            let html = '';
+            for (const wh of webhooks) {
+                const enabled = wh.enabled !== false;
+                html += `<div class="webhook-item">
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleWebhook('${esc(wh.name)}', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="wh-name">${esc(wh.name)}</span>
+                    <span class="wh-url" title="${esc(wh.url)}">${esc(wh.url)}</span>
+                    <span class="wh-type">${esc(wh.type || 'generic')}</span>
+                    <div class="webhook-actions">
+                        <button class="btn btn-sm btn-ghost" onclick="testWebhook('${esc(wh.name)}')">Test</button>
+                        <button class="btn btn-sm btn-danger btn-icon" onclick="deleteWebhook('${esc(wh.name)}')">&times;</button>
+                    </div>
+                </div>`;
+            }
+            list.innerHTML = html;
+        }
+
+        async function addWebhook() {
+            const name = document.getElementById('whName').value.trim();
+            const url = document.getElementById('whUrl').value.trim();
+            const type = document.getElementById('whType').value;
+
+            if (!name || !url) { alert('Ad ve URL giriniz.'); return; }
+
+            try {
+                const res = await fetch('/migration/api/webhooks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, url, type }),
+                });
+                const data = await res.json();
+                if (data.error) { alert(data.error); return; }
+                document.getElementById('whName').value = '';
+                document.getElementById('whUrl').value = '';
+                loadWebhooks();
+            } catch (err) { alert('Hata: ' + err.message); }
+        }
+
+        async function deleteWebhook(name) {
+            if (!confirm(`"${name}" webhook silinsin mi?`)) return;
+            try {
+                await fetch('/migration/api/webhooks/' + encodeURIComponent(name), { method: 'DELETE' });
+                loadWebhooks();
+            } catch (err) { alert('Hata: ' + err.message); }
+        }
+
+        async function testWebhook(name) {
+            try {
+                const res = await fetch('/migration/api/webhooks/' + encodeURIComponent(name) + '/test', { method: 'POST' });
+                const data = await res.json();
+                if (data.error) alert('Test hatasi: ' + data.error);
+                else alert(data.message || 'Test mesaji gonderildi.');
+            } catch (err) { alert('Hata: ' + err.message); }
+        }
+
+        async function toggleWebhook(name, enabled) {
+            try {
+                await fetch('/migration/api/webhooks/' + encodeURIComponent(name), {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled }),
+                });
+            } catch (err) { alert('Hata: ' + err.message); loadWebhooks(); }
+        }
+
+        // ==================== AUDIT LOG ====================
+        async function loadAuditLog() {
+            try {
+                const res = await fetch('/migration/api/audit-log?limit=100');
+                auditLog = await res.json();
+            } catch { auditLog = []; }
+            renderAuditFilters();
+            renderAuditLog();
+        }
+
+        function renderAuditFilters() {
+            const types = [...new Set(auditLog.map(e => e.type || e.event_type || 'unknown'))];
+            const container = document.getElementById('auditFilters');
+            let html = `<button class="btn btn-sm btn-ghost${!auditFilter ? ' active' : ''}" onclick="setAuditFilter('', this)">Tumu</button>`;
+            types.forEach(t => {
+                html += `<button class="btn btn-sm btn-ghost${auditFilter === t ? ' active' : ''}" onclick="setAuditFilter('${esc(t)}', this)">${esc(t)}</button>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function setAuditFilter(f, btn) {
+            auditFilter = f;
+            document.querySelectorAll('#auditFilters .btn-ghost').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            renderAuditLog();
+        }
+
+        function renderAuditLog() {
+            const tbody = document.getElementById('auditBody');
+            let filtered = auditLog;
+            if (auditFilter) {
+                filtered = auditLog.filter(e => (e.type || e.event_type) === auditFilter);
+            }
+            document.getElementById('auditCount').textContent = filtered.length;
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted" style="padding:20px;">Kayit yok</td></tr>';
+                return;
+            }
+
+            let html = '';
+            for (const e of filtered) {
+                const ts = e.timestamp ? new Date(e.timestamp).toLocaleString('tr-TR') : '—';
+                const type = e.type || e.event_type || '';
+                const detail = e.detail || e.message || e.description || '';
+                html += `<tr>
+                    <td class="mono" style="white-space:nowrap;">${esc(ts)}</td>
+                    <td><span class="card-badge">${esc(type)}</span></td>
+                    <td>${esc(detail)}</td>
+                </tr>`;
+            }
+            tbody.innerHTML = html;
+        }
+
+        async function clearAuditLog() {
+            if (!confirm('Tum audit log temizlensin mi?')) return;
+            try {
+                await fetch('/migration/api/audit-log/clear', { method: 'POST' });
+                auditLog = [];
+                renderAuditFilters();
+                renderAuditLog();
+            } catch (err) { alert('Hata: ' + err.message); }
+        }
+
+        // ==================== SESSION STORAGE / BASELINE SAVE ====================
+        function checkSessionData() {
+            try {
+                const ports = localStorage.getItem('lastCollectPorts');
+                const time = localStorage.getItem('lastCollectTime');
+                if (ports && JSON.parse(ports).length > 0) {
+                    const bar = document.getElementById('baselineSaveBar');
+                    bar.classList.remove('hidden');
+                    const count = JSON.parse(ports).length;
+                    const timeStr = time ? new Date(time).toLocaleString('tr-TR') : '';
+                    document.getElementById('baselineSaveInfo').textContent =
+                        `(${count} port — ${timeStr})`;
+                }
+            } catch (e) {}
+        }
+
+        async function saveBaselineFromSession() {
+            let ports, topology;
+            try {
+                ports = JSON.parse(localStorage.getItem('lastCollectPorts') || '[]');
+                topology = JSON.parse(localStorage.getItem('lastCollectTopology') || '[]');
+            } catch (e) {
+                alert('Session verisinde hata.');
+                return;
+            }
+
+            if (ports.length === 0) {
+                alert('Kaydedilecek veri yok. Once Port Mapping sayfasindan veri toplayin.');
+                return;
+            }
+
+            const label = document.getElementById('baselineLabelInput').value.trim()
+                || `Baseline — ${new Date().toLocaleDateString('tr-TR')}`;
+
+            try {
+                const res = await fetch('/migration/api/baseline/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ label, ports, topology }),
+                });
+                const result = await res.json();
+                if (res.ok) {
+                    alert('Baseline kaydedildi: ' + result.label);
+                    document.getElementById('baselineLabelInput').value = '';
+                    loadBaselines();
+                } else {
+                    alert('Hata: ' + (result.error || 'Bilinmeyen'));
+                }
+            } catch (err) {
+                alert('Baseline kayit hatasi: ' + err.message);
+            }
+        }
+
+        // ==================== INIT ====================
+        async function loadCachedSummary() {
+            try {
+                const res = await fetch('/migration/api/settings/dashboard_summary');
+                const data = await res.json();
+                if (data.value && data.value.results && data.value.results.length > 0) {
+                    renderSummary(data.value.results);
+                    const ts = data.value.timestamp ? new Date(data.value.timestamp).toLocaleString('tr-TR') : '';
+                    const lr = document.getElementById('lastRefresh');
+                    lr.style.display = 'block';
+                    lr.textContent = 'Son guncelleme: ' + ts + ' (onbellekten yuklendi)';
+                }
+            } catch (e) {}
+        }
+
+        async function init() {
+            await loadProfiles();
+            await loadGroups();
+
+            // Kaydedilmis switch listesini yukle
+            const hasSwitch = await loadDashSwitches();
+            if (!hasSwitch) addDashSwitch();
+
+            // Onceki ozet sonuclarini yukle
+            await loadCachedSummary();
+
+            loadBaselines();
+            loadWebhooks();
+            loadAuditLog();
+            checkSessionData();
+            startAutoRefresh();
+        }
+
+        init();
+    </script>
+</body>
+</html>

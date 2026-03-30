@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Port Monitor — DC Migration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/migration/static/style.css">
+<style>
+.diff-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+.diff-table th{background:var(--color-bg);padding:8px 10px;text-align:left;font-weight:600;font-size:12px;border-bottom:2px solid var(--color-border)}
+.diff-table td{padding:6px 10px;border-bottom:1px solid var(--color-border-light)}
+.fw-section{margin-top:14px;padding:14px;background:var(--color-bg);border-radius:var(--radius-md);border:1px solid var(--color-border-light)}
+.fw-section-title{font-size:13px;font-weight:600;color:var(--color-text);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.fw-section-hint{font-size:11px;color:var(--color-text-muted);font-weight:400}
+.fw-grid{display:grid;grid-template-columns:2fr 1fr 1fr 100px;gap:10px;align-items:end}
+.bottom-row{display:flex;gap:12px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.change-tag{margin-left:auto;cursor:pointer;font-size:11px;color:var(--color-accent);white-space:nowrap}
+.change-tag:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<script src="/migration/static/common.js"></script>
+<script>document.body.insertAdjacentHTML('afterbegin', renderTopbar('monitor'));</script>
+
+<div class="page page-wide">
+    <!-- Setup Card -->
+    <div class="card" id="setupCard">
+        <div class="card-header">
+            <div class="card-title">Switch Listesi <span class="card-badge" id="swCount">0 switch</span></div>
+        </div>
+        <div class="flex items-center gap-sm mb-sm flex-wrap">
+            <select class="form-select" id="groupSelectMon" onchange="onGroupSelectMon()" style="flex:1;max-width:300px;">
+                <option value="">-- Switch Grubu Sec --</option>
+            </select>
+            <span class="help-text">veya manuel ekleyin</span>
+        </div>
+        <div id="monSwitches"></div>
+        <button class="btn btn-flat btn-block mt-sm" onclick="addMonSwitch()">+ Switch Ekle</button>
+
+        <!-- Firewall Bilgileri (Opsiyonel) -->
+        <div class="fw-section">
+            <div class="fw-section-title">Firewall Bilgileri <span class="fw-section-hint">(Opsiyonel — MAC&#8594;IP ve Hostname icin)</span></div>
+            <div class="fw-grid">
+                <div class="form-group"><label class="form-label">Firewall IP</label><input type="text" class="form-input" id="fwHost" placeholder="192.168.1.1"></div>
+                <div class="form-group"><label class="form-label">Profil</label><select class="form-select mon-profile" id="fwProfile"><option value="">-- Profil Sec --</option></select></div>
+                <div class="form-group"><label class="form-label">Sifre</label><input type="password" class="form-input" id="fwPassword" placeholder="Profil seciliyse bos birakin"></div>
+                <div class="form-group"><label class="form-label">Port</label><input type="number" class="form-input" id="fwPort" value="22" min="1" max="65535"></div>
+            </div>
+        </div>
+
+        <div class="bottom-row">
+            <div class="form-group" style="width:100px"><label class="form-label">Aralik (sn)</label><input type="number" class="form-input" id="monInterval" value="3" min="1" max="30"></div>
+            <button class="btn btn-success" id="monBtn" onclick="toggleMonitor()">Izlemeyi Baslat</button>
+            <label class="sound-toggle"><input type="checkbox" id="soundEnabled" checked> Ses bildirimi</label>
+            <span class="help-text" id="monStatus"></span>
+        </div>
+    </div>
+
+    <!-- Monitor Content (hidden until monitoring starts) -->
+    <div id="monitorContent" class="hidden">
+        <!-- Status Bar -->
+        <div class="stat-bar" id="statusBar">
+            <div class="stat-item"><span class="live-dot" id="liveDot"></span><strong id="hostnameLabel">—</strong></div>
+            <div class="stat-item">Switch: <span class="stat-value purple" id="statSwitches">0</span></div>
+            <div class="stat-item">Toplam: <span class="stat-value blue" id="statTotal">0</span></div>
+            <div class="stat-item">Connected: <span class="stat-value green" id="statConnected">0</span></div>
+            <div class="stat-item">NotConnect: <span class="stat-value red" id="statNotconnect">0</span></div>
+            <div class="stat-item">Disabled: <span class="stat-value gray" id="statDisabled">0</span></div>
+            <div class="stat-item ml-auto"><span class="help-text" id="pollInfo">—</span></div>
+        </div>
+
+        <!-- Connection Banner -->
+        <div class="conn-banner" id="connBanner"></div>
+
+        <!-- Two Column Layout -->
+        <div class="two-col">
+            <!-- Left: Port Table -->
+            <div class="card" style="padding:14px">
+                <div class="flex items-center gap-sm mb-sm flex-wrap">
+                    <div class="filter-group">
+                        <button class="btn btn-sm btn-ghost active" onclick="setFilter('all',this)">Tumu</button>
+                        <button class="btn btn-sm btn-ghost" onclick="setFilter('changes',this)">Degisen</button>
+                        <button class="btn btn-sm btn-ghost" onclick="setFilter('connected',this)">Connected</button>
+                        <button class="btn btn-sm btn-ghost" onclick="setFilter('notconnect',this)">NotConnect</button>
+                    </div>
+                    <select id="switchFilter" class="form-select btn-sm" onchange="renderPortTable()"><option value="">Tum Switchler</option></select>
+                    <input type="text" class="form-input ml-auto" id="searchBox" placeholder="Port, switch veya description ara..." oninput="renderPortTable()" style="width:220px">
+                </div>
+                <div class="table-wrap">
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead><tr><th>Switch</th><th>Port</th><th>Description</th><th>Status</th><th>Tip</th><th>Son Degisiklik</th></tr></thead>
+                            <tbody id="portTableBody"><tr><td colspan="6" class="text-center text-muted" style="padding:30px">Izleme basladiginda portlar burada gorunecek</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div>
+                <!-- Change Log -->
+                <div class="card" style="padding:14px">
+                    <div class="card-header" style="margin-bottom:10px">
+                        <div class="card-title">Degisiklik Logu <span class="help-text" id="changeCount">(0)</span></div>
+                        <div class="flex gap-sm">
+                            <button class="btn btn-sm btn-ghost" onclick="bulkTag()">Toplu Etiketle</button>
+                            <button class="btn btn-sm btn-ghost" onclick="exportCSV()">CSV Indir</button>
+                        </div>
+                    </div>
+                    <div id="bulkTagBar" class="hidden" style="margin-bottom:10px">
+                        <div class="alert alert-info" style="margin-bottom:0">
+                            <div class="flex gap-sm items-center flex-wrap" style="width:100%">
+                                <span style="font-weight:600">Toplu Etiketleme</span>
+                                <input type="text" class="form-input" id="bulkTagInput" placeholder="Etiket girin" style="flex:1;padding:5px 8px;font-size:12px">
+                                <select class="form-select" id="bulkTagRange" style="padding:5px 8px;font-size:12px">
+                                    <option value="untagged">Etiketsizlere</option><option value="last5">Son 5</option><option value="last10">Son 10</option><option value="alldown">Tum DOWN</option><option value="all">Tumune</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" onclick="applyBulkTag()">Uygula</button>
+                                <button class="btn btn-sm btn-ghost" onclick="closeBulkTag()">Iptal</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="change-log" id="changeLog"><div class="text-center text-muted" style="padding:20px;font-size:13px">Henuz degisiklik yok</div></div>
+                </div>
+
+                <!-- Snapshots -->
+                <div class="card" style="padding:14px">
+                    <div class="card-header" style="margin-bottom:8px">
+                        <div class="card-title">Snapshot</div>
+                        <button class="btn btn-sm btn-ghost" onclick="takeSnapshot()">Snapshot Al</button>
+                    </div>
+                    <p class="help-text mb-sm">Tasima oncesi/sonrasi karsilastirma icin snapshot alin.</p>
+                    <div class="snapshot-list" id="snapshotList"><span class="help-text">Henuz snapshot alinmadi</span></div>
+                    <div id="snapshotDiff" style="margin-top:10px"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let state = { isMonitoring:false, sessionId:null, eventSource:null, switches:{}, changeLog:[], changedPorts:new Set(), lastChangeTime:{}, snapshots:[], selectedSnapshots:[], filter:'all', profiles:[] };
+
+function addMonSwitch(){
+    const c=document.getElementById('monSwitches'),r=document.createElement('div');r.className='entry-row';
+    r.innerHTML=`<div class="form-group"><label class="form-label">IP / Range</label><input type="text" class="form-input mon-host" placeholder="192.168.1.160-168"></div>
+        <div class="form-group"><label class="form-label">Profil</label><select class="form-select mon-profile">${getProfileOptions()}</select></div>
+        <div class="form-group"><label class="form-label">Port</label><input type="number" class="form-input mon-port" placeholder="22" min="1" max="65535"></div>
+        <button class="btn-remove" onclick="this.closest('.entry-row').remove();updateSwCount()" title="Kaldir">&times;</button>`;
+    c.appendChild(r);updateSwCount();
+}
+function updateSwCount(){document.getElementById('swCount').textContent=document.querySelectorAll('.entry-row').length+' switch'}
+
+function connectSSE(){
+    if(state.eventSource){state.eventSource.close();state.eventSource=null}
+    const es=new EventSource('/migration/api/monitor/stream');state.eventSource=es;
+    ['snapshot','change','history','poll','connected','stopped','switch_error','connection_lost','connection_restored'].forEach(ev=>{
+        es.addEventListener(ev,e=>handleEvent(ev,JSON.parse(e.data)));
+    });
+    es.addEventListener('error_event',e=>handleEvent('error',JSON.parse(e.data)));
+    es.addEventListener('heartbeat',()=>{});
+    es.onerror=()=>{if(state.isMonitoring){const b=document.getElementById('connBanner');b.className='conn-banner lost';b.textContent='SSE baglantisi kesildi, yeniden baglaniliyor...'}};
+    es.onopen=()=>{const b=document.getElementById('connBanner');if(b.classList.contains('lost')){b.className='conn-banner restored';b.textContent='SSE baglantisi yeniden kuruldu!';setTimeout(()=>{b.className='conn-banner'},5000)}};
+}
+function disconnectSSE(){if(state.eventSource){state.eventSource.close();state.eventSource=null}}
+
+function toggleMonitor(){state.isMonitoring?stopMonitor():startMonitor()}
+
+async function startMonitor(){
+    const rows=document.querySelectorAll('.entry-row'),switches=[];
+    rows.forEach(r=>{const h=r.querySelector('.mon-host').value.trim(),p=r.querySelector('.mon-profile').value,pt=r.querySelector('.mon-port').value||'';if(h)switches.push({host:h,profile:p,port:pt})});
+    if(!switches.length){alert('En az bir switch IP adresi giriniz.');return}
+    const interval=document.getElementById('monInterval').value||'3',btn=document.getElementById('monBtn');
+    const fwHost=document.getElementById('fwHost').value.trim();
+    const fwProfile=document.getElementById('fwProfile').value;
+    const fwPassword=document.getElementById('fwPassword').value;
+    const fwPort=document.getElementById('fwPort').value||'22';
+    const payload={switches,interval};
+    if(fwHost){payload.firewall={host:fwHost,profile:fwProfile,password:fwPassword,port:fwPort}}
+    btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Baglaniliyor...';
+    try{
+        const res=await fetch('/migration/api/monitor/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const data=await res.json();
+        if(!res.ok&&data.error!=='already_active'){alert(data.error||data.message||'Baslatilamadi');btn.disabled=false;btn.innerHTML='Izlemeyi Baslat';btn.className='btn btn-success';return}
+        state.sessionId=data.session_id||null;
+        resetLocalState();enterMonitoringUI();connectSSE();
+        if(data.error==='already_active')await loadExistingData();
+    }catch(err){alert('Baglanti hatasi: '+err.message);btn.disabled=false;btn.innerHTML='Izlemeyi Baslat';btn.className='btn btn-success'}
+}
+
+async function stopMonitor(){
+    try{await fetch('/migration/api/monitor/stop',{method:'POST'})}catch{}
+    disconnectSSE();exitMonitoringUI();
+}
+
+function resetLocalState(){state.switches={};state.changeLog=[];state.changedPorts=new Set();state.lastChangeTime={};state.snapshots=[];state.selectedSnapshots=[]}
+function enterMonitoringUI(){
+    state.isMonitoring=true;const btn=document.getElementById('monBtn');
+    btn.disabled=false;btn.innerHTML='Izlemeyi Durdur';btn.className='btn btn-danger';
+    document.getElementById('monitorContent').classList.remove('hidden');document.getElementById('monStatus').textContent='Baglaniliyor...';
+}
+function exitMonitoringUI(){
+    state.isMonitoring=false;const btn=document.getElementById('monBtn');
+    btn.disabled=false;btn.innerHTML='Izlemeyi Baslat';btn.className='btn btn-success';
+    document.getElementById('monStatus').textContent='Izleme durduruldu';
+    const dot=document.getElementById('liveDot');if(dot)dot.style.display='none';
+}
+
+async function loadExistingData(){
+    const sid=state.sessionId,q=sid?'?session_id='+sid:'';
+    try{
+        const [stR,chR,snR]=await Promise.all([fetch('/migration/api/monitor/state'+q),fetch('/migration/api/monitor/changes'+q),fetch('/migration/api/monitor/snapshots'+q)]);
+        if(stR.ok){const ps=await stR.json();if(Array.isArray(ps)){for(const sw of ps){state.switches[sw.host]={hostname:sw.hostname||sw.host,ports:sw.ports||{}};getSwColor(sw.host)}updateSwitchFilter();renderPortTable()}}
+        if(chR.ok){const ch=await chR.json();if(Array.isArray(ch)){state.changeLog=ch;for(const c of ch){const k=c.host+'::'+c.port;state.changedPorts.add(k);if(c.timestamp)state.lastChangeTime[k]=c.timestamp}renderChangeLog()}}
+        if(snR.ok){const sn=await snR.json();if(Array.isArray(sn)){state.snapshots=sn;renderSnapshots()}}
+    }catch{}
+}
+
+function handleEvent(type,data){
+    switch(type){
+    case 'snapshot':{
+        const h=data.host;state.switches[h]={hostname:data.hostname,ports:data.ports};getSwColor(h);updateSwitchFilter();
+        const tp=Object.values(state.switches).reduce((s,sw)=>s+Object.keys(sw.ports).length,0);
+        document.getElementById('hostnameLabel').textContent=Object.values(state.switches).map(s=>s.hostname).join(', ');
+        document.getElementById('monStatus').textContent=`${Object.keys(state.switches).length} switch, ${tp} port izleniyor`;
+        renderPortTable();break;
+    }
+    case 'connected':
+        document.getElementById('statSwitches').textContent=data.count;
+        document.getElementById('monStatus').textContent=`${data.count} switch baglandi — ${data.hosts.join(', ')}`;break;
+    case 'change':
+        for(const ch of(data.changes||[data])){
+            const h=ch.host,k=h+'::'+ch.port;
+            if(state.switches[h]&&state.switches[h].ports[ch.port])state.switches[h].ports[ch.port].status=ch.to_status;
+            state.changeLog.unshift({...ch,timestamp:ch.timestamp||data.timestamp});
+            state.changedPorts.add(k);state.lastChangeTime[k]=ch.timestamp||data.timestamp;
+            flashRow(h,ch.port,ch.to_status);
+            if(document.getElementById('soundEnabled').checked)playBeep();
+        }
+        renderPortTable();renderChangeLog();break;
+    case 'history':
+        if(Array.isArray(data.changes)){for(const ch of data.changes){state.changeLog.push(ch);const k=ch.host+'::'+ch.port;state.changedPorts.add(k);if(ch.timestamp)state.lastChangeTime[k]=ch.timestamp}renderChangeLog()}break;
+    case 'poll':
+        document.getElementById('statTotal').textContent=data.summary.total;
+        document.getElementById('statConnected').textContent=data.summary.connected;
+        document.getElementById('statNotconnect').textContent=data.summary.notconnect;
+        document.getElementById('statDisabled').textContent=data.summary.disabled||0;
+        document.getElementById('statSwitches').textContent=data.alive_switches+'/'+data.total_switches;
+        document.getElementById('pollInfo').textContent=`Poll #${data.poll_number} — ${new Date(data.timestamp).toLocaleTimeString('tr-TR')}`;break;
+    case 'stopped':disconnectSSE();exitMonitoringUI();document.getElementById('monStatus').textContent='Oturum sona erdi';break;
+    case 'connection_lost':{const b=document.getElementById('connBanner');b.className='conn-banner lost';b.textContent=`${data.hostname||data.host}: SSH koptu — ${data.error}`;break}
+    case 'connection_restored':{const b=document.getElementById('connBanner');b.className='conn-banner restored';b.textContent=`${data.hostname||data.host}: Baglanti yeniden kuruldu!`;setTimeout(()=>{b.className='conn-banner'},5000);break}
+    case 'switch_error':{const b=document.getElementById('connBanner');b.className='conn-banner lost';b.textContent=`${data.host}: ${data.error}`;break}
+    case 'error':alert('Hata: '+(data.error||'Bilinmeyen hata'));stopMonitor();break;
+    }
+}
+
+function flashRow(host,port,toStatus){
+    const rid='row-'+host.replace(/\./g,'_')+'-'+port.replace(/\//g,'-'),row=document.getElementById(rid);
+    if(!row)return;row.className='';void row.offsetWidth;row.className=toStatus.toLowerCase().includes('notconnect')?'flash-down':'flash-up';
+}
+
+function updateSwitchFilter(){
+    const sel=document.getElementById('switchFilter'),cur=sel.value;
+    let o='<option value="">Tum Switchler</option>';
+    for(const[h,sw]of Object.entries(state.switches))o+=`<option value="${esc(h)}">${esc(sw.hostname)} (${esc(h)})</option>`;
+    sel.innerHTML=o;sel.value=cur;
+}
+
+function renderPortTable(){
+    const tbody=document.getElementById('portTableBody'),search=document.getElementById('searchBox').value.toLowerCase(),filter=state.filter,swF=document.getElementById('switchFilter').value;
+    let all=[];
+    for(const[h,sw]of Object.entries(state.switches))for(const[pn,info]of Object.entries(sw.ports))all.push({host:h,hostname:sw.hostname,portName:pn,...info});
+    all.sort((a,b)=>a.hostname!==b.hostname?a.hostname.localeCompare(b.hostname):(parseInt(a.portName.replace(/\D/g,''))||0)-(parseInt(b.portName.replace(/\D/g,''))||0));
+    let html='';
+    for(const p of all){
+        const k=p.host+'::'+p.portName,sl=p.status.toLowerCase(),isN=sl.includes('notconnect')||sl.includes('noconnpresent');
+        if(swF&&p.host!==swF)continue;if(filter==='changes'&&!state.changedPorts.has(k))continue;
+        if(filter==='connected'&&sl!=='connected')continue;if(filter==='notconnect'&&!isN)continue;
+        if(search&&!p.portName.toLowerCase().includes(search)&&!p.hostname.toLowerCase().includes(search)&&!(p.description||'').toLowerCase().includes(search))continue;
+        const badge=sl==='connected'?'badge-connected':isN?'badge-notconnect':'badge-disabled';
+        const lc=state.lastChangeTime[k]?new Date(state.lastChangeTime[k]).toLocaleTimeString('tr-TR'):'—';
+        const color=getSwColor(p.host),rid='row-'+p.host.replace(/\./g,'_')+'-'+p.portName.replace(/\//g,'-');
+        html+=`<tr id="${rid}"><td><span class="sw-badge" style="background:${color}20;color:${color}">${esc(p.hostname)}</span></td><td><strong>${esc(p.portName)}</strong></td><td>${esc(p.description||'')}</td><td><span class="badge ${badge}">${esc(p.status)}</span></td><td>${esc(p.port_type||'')}</td><td class="mono">${lc}</td></tr>`;
+    }
+    if(!html)html='<tr><td colspan="6" class="text-center text-muted" style="padding:20px">Filtre kriterlerine uyan port yok</td></tr>';
+    tbody.innerHTML=html;
+}
+
+function setFilter(f,btn){state.filter=f;document.querySelectorAll('.filter-group .btn-ghost').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderPortTable()}
+
+function renderChangeLog(){
+    const log=document.getElementById('changeLog');document.getElementById('changeCount').textContent=`(${state.changeLog.length})`;
+    if(!state.changeLog.length){log.innerHTML='<div class="text-center text-muted" style="padding:20px;font-size:13px">Henuz degisiklik yok</div>';return}
+    let html='';
+    for(const c of state.changeLog.slice(0,200)){
+        const t=c.timestamp?new Date(c.timestamp).toLocaleTimeString('tr-TR'):'';
+        const isD=(c.to_status||'').toLowerCase().includes('notconnect'),cls=isD?'down':'up',arrow=isD?'\u25BC':'\u25B2';
+        const color=getSwColor(c.host);
+        const tagH=c.tag?`<span class="tag-label">${esc(c.tag)}</span>`:(c.id?`<span class="change-tag" onclick="tagChange(${c.id})">Etiketle</span>`:'');
+        html+=`<div class="change-entry"><span class="change-time">${t}</span><span class="change-arrow ${cls}">${arrow}</span><span class="sw-badge" style="background:${color}20;color:${color}">${esc(c.hostname||c.host)}</span><strong>${esc(c.port)}</strong><span class="text-muted">${esc(c.from_status)}\u2192${esc(c.to_status)}</span>${tagH}</div>`;
+    }
+    log.innerHTML=html;
+}
+
+async function tagChange(changeId){
+    const label=prompt('Etiket girin (or: Sunucu-DB-01):');if(label===null)return;
+    try{
+        await fetch('/migration/api/monitor/tag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({change_id:changeId,tag:label})});
+        const e=state.changeLog.find(c=>c.id===changeId);if(e)e.tag=label;renderChangeLog();
+    }catch(err){alert('Etiketleme hatasi: '+err.message)}
+}
+
+function bulkTag(){document.getElementById('bulkTagBar').classList.remove('hidden');document.getElementById('bulkTagInput').focus()}
+function closeBulkTag(){document.getElementById('bulkTagBar').classList.add('hidden')}
+
+async function applyBulkTag(){
+    const label=document.getElementById('bulkTagInput').value.trim();if(!label){alert('Etiket giriniz.');return}
+    const scope=document.getElementById('bulkTagRange').value;
+    try{
+        const res=await fetch('/migration/api/monitor/bulk-tag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag:label,scope,session_id:state.sessionId})});
+        const data=await res.json();await refreshChanges();closeBulkTag();
+        alert(`${data.count||0} degisiklige "${label}" etiketi uygulandi.`);
+    }catch(err){alert('Toplu etiketleme hatasi: '+err.message)}
+}
+
+async function refreshChanges(){
+    try{const r=await fetch('/migration/api/monitor/changes'+(state.sessionId?'?session_id='+state.sessionId:''));if(r.ok){const ch=await r.json();if(Array.isArray(ch)){state.changeLog=ch;renderChangeLog()}}}catch{}
+}
+
+async function exportCSV(){
+    if(!state.changeLog.length){alert('Henuz degisiklik yok.');return}
+    try{
+        const r=await fetch('/migration/api/monitor/export-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.sessionId})});
+        const blob=await r.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='port_changes.csv';a.click();URL.revokeObjectURL(url);
+    }catch(err){alert('CSV export hatasi: '+err.message)}
+}
+
+async function takeSnapshot(){
+    if(!Object.keys(state.switches).length){alert('Henuz veri yok.');return}
+    const label=prompt('Snapshot etiketi:',`Snapshot ${state.snapshots.length+1}`);if(label===null)return;
+    try{const r=await fetch('/migration/api/monitor/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label,session_id:state.sessionId})});if(r.ok)await refreshSnapshots()}catch(err){alert('Snapshot hatasi: '+err.message)}
+}
+
+async function refreshSnapshots(){
+    try{const r=await fetch('/migration/api/monitor/snapshots'+(state.sessionId?'?session_id='+state.sessionId:''));if(r.ok){state.snapshots=await r.json();state.selectedSnapshots=[];renderSnapshots()}}catch{}
+}
+
+function renderSnapshots(){
+    const list=document.getElementById('snapshotList');
+    if(!state.snapshots.length){list.innerHTML='<span class="help-text">Henuz snapshot alinmadi</span>';return}
+    let html='';state.snapshots.forEach((s,i)=>{
+        const sel=state.selectedSnapshots.includes(i)?'selected':'',t=s.timestamp?new Date(s.timestamp).toLocaleTimeString('tr-TR'):'';
+        const oi=state.selectedSnapshots.indexOf(i);
+        const ob=oi===0?' <span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700">1. Oncesi</span>':oi===1?' <span style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700">2. Sonrasi</span>':'';
+        html+=`<span class="snapshot-chip ${sel}" onclick="selectSnapshot(${i})">${esc(s.label)} (${t})${ob}</span>`;
+    });list.innerHTML=html;
+    if(state.selectedSnapshots.length===2)showSnapshotDiff();else document.getElementById('snapshotDiff').innerHTML='';
+}
+
+function selectSnapshot(idx){
+    const p=state.selectedSnapshots.indexOf(idx);
+    if(p>=0)state.selectedSnapshots.splice(p,1);else{if(state.selectedSnapshots.length>=2)state.selectedSnapshots.shift();state.selectedSnapshots.push(idx)}
+    renderSnapshots();
+}
+
+async function showSnapshotDiff(){
+    const[i1,i2]=state.selectedSnapshots,s1=state.snapshots[i1],s2=state.snapshots[i2],diffDiv=document.getElementById('snapshotDiff');
+    try{
+        const[r1,r2]=await Promise.all([fetch('/migration/api/monitor/snapshot/'+s1.id).then(r=>r.json()),fetch('/migration/api/monitor/snapshot/'+s2.id).then(r=>r.json())]);
+        const d1=r1.data||r1,d2=r2.data||r2,changes=[];
+        const allH=new Set([...Object.keys(d1),...Object.keys(d2)]);
+        for(const h of allH){const p1=(d1[h]||{}).ports||{},p2=(d2[h]||{}).ports||{},hn=(d2[h]||d1[h]||{}).hostname||h;
+            for(const port of new Set([...Object.keys(p1),...Object.keys(p2)])){const st1=p1[port]?p1[port].status:'—',st2=p2[port]?p2[port].status:'—';if(st1!==st2)changes.push({hostname:hn,port,from:st1,to:st2})}}
+        if(!changes.length){diffDiv.innerHTML='<div class="alert alert-success">Iki snapshot arasinda fark yok.</div>';return}
+        let html=`<div class="alert alert-info">${changes.length} port degismis: ${esc(s1.label)} \u2192 ${esc(s2.label)}</div><table class="diff-table"><thead><tr><th>Switch</th><th>Port</th><th>Onceki</th><th>Sonraki</th></tr></thead><tbody>`;
+        for(const c of changes)html+=`<tr><td>${esc(c.hostname)}</td><td><strong>${esc(c.port)}</strong></td><td>${esc(c.from)}</td><td>${esc(c.to)}</td></tr>`;
+        diffDiv.innerHTML=html+'</tbody></table>';
+    }catch(err){diffDiv.innerHTML=`<div class="alert alert-error">Karsilastirma hatasi: ${esc(err.message)}</div>`}
+}
+
+function onGroupSelectMon(){
+    const name=document.getElementById('groupSelectMon').value;if(!name)return;
+    const group=getSwitchGroupByName(name);if(!group)return;
+    document.getElementById('monSwitches').innerHTML='';
+    for(const sw of group.switches){addMonSwitch();const rows=document.querySelectorAll('.entry-row');const row=rows[rows.length-1];
+        row.querySelector('.mon-host').value=sw.host||'';if(sw.profile){row.querySelector('.mon-profile').value=sw.profile}
+        if(sw.port)row.querySelector('.mon-port').value=sw.port}
+    updateSwCount();
+}
+
+async function init(){
+    await loadProfiles();
+    await loadSwitchGroups();
+    updateAllSelects('.mon-profile');
+    document.getElementById('groupSelectMon').innerHTML=getSwitchGroupOptions();
+    addMonSwitch();
+    try{const r=await fetch('/migration/api/monitor/status');if(r.ok){const s=await r.json();if(s.active){state.sessionId=s.session_id||null;resetLocalState();enterMonitoringUI();await loadExistingData();connectSSE()}}}catch{}
+}
+init();
+</script>
+</body>
+</html>

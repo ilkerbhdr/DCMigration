@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Table — DC Migration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/migration/static/style.css">
+<style>
+.po-row { background: #f0f4ff !important; }
+.po-row:hover { background: #e8eeff !important; }
+.po-members-wrap { position: relative; display: inline; }
+.po-members-popup { display: none; position: absolute; z-index: 99; top: 100%; left: 0; background: white; border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(0,0,0,0.12); padding: 8px 12px; min-width: 200px; }
+.po-members-popup.show { display: block; }
+.po-member { padding: 4px 0; border-bottom: 1px solid var(--color-border-light); display: flex; justify-content: space-between; gap: 12px; }
+.po-member:last-child { border-bottom: none; }
+.po-member-name { font-weight: 600; color: var(--color-text); }
+.po-member-status { font-size: 10px; font-weight: 600; }
+.po-member-badge { display: inline-block; font-size: 10px; font-weight: 600; color: #7c3aed; background: #f3e8ff; padding: 1px 5px; border-radius: 3px; margin-left: 4px; cursor: help; }
+.errors-text { color: var(--color-danger); font-weight: 600; }
+.recent-changed { border-left: 4px solid #f59e0b !important; background: #fffbeb !important; }
+.recent-changed td { background: #fffbeb !important; }
+.recent-changed td:first-child::before { content: '\25B2 '; color: #f59e0b; font-size: 9px; vertical-align: middle; }
+.filter-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.filter-rule { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+.filter-rule select, .filter-rule input { padding: 5px 8px; font-size: 12px; border-radius: var(--radius-sm); }
+.filter-rule .filter-logic { font-size: 11px; font-weight: 700; color: var(--color-accent); min-width: 32px; text-align: center; }
+.filter-rule .btn-remove-filter { background: none; border: none; color: var(--color-text-muted); cursor: pointer; font-size: 16px; padding: 0 4px; }
+.filter-rule .btn-remove-filter:hover { color: var(--color-danger); }
+
+/* Truncate popup */
+.trunc-more-wrap { position: relative; display: inline; }
+.trunc-more-btn {
+    display: inline-block; background: #e0e7ff; color: #3b52b5; border: none;
+    padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    cursor: pointer; margin-left: 4px; white-space: nowrap;
+}
+.trunc-more-btn:hover { background: #c7d2fe; }
+.trunc-popup {
+    display: none; position: absolute; z-index: 999; top: 100%; left: 0;
+    background: white; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15); min-width: 280px; max-width: 400px;
+    max-height: 300px; overflow: hidden;
+}
+.trunc-popup.open { display: block; }
+.trunc-popup-header {
+    padding: 8px 12px; font-size: 12px; font-weight: 700; color: var(--color-text);
+    background: var(--color-bg); border-bottom: 1px solid var(--color-border-light);
+    display: flex; justify-content: space-between; align-items: center;
+}
+.trunc-popup-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--color-text-muted); padding: 0 4px; }
+.trunc-popup-close:hover { color: var(--color-danger); }
+.trunc-popup-body { padding: 8px 12px; overflow-y: auto; max-height: 250px; }
+.trunc-popup-item {
+    padding: 3px 0; border-bottom: 1px solid var(--color-border-light);
+    font-size: 12px; font-family: var(--font-mono); color: var(--color-text);
+}
+.trunc-popup-item:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+<script src="/migration/static/common.js"></script>
+<script>document.body.insertAdjacentHTML('afterbegin', renderTopbar('live'));</script>
+
+<div class="page page-wide">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Live Table</h1>
+            <p class="page-subtitle">Canli port detay tablosu — gercek zamanli izleme</p>
+        </div>
+        <div class="flex items-center gap-sm">
+            <span class="live-dot" id="liveDot" style="display:none"></span>
+            <strong id="statusLabel" style="font-size:13px">Baglaniyor...</strong>
+        </div>
+    </div>
+
+    <div class="stat-bar" id="statusBar">
+        <div class="stat-item">Switch: <span class="stat-value purple" id="statSwitches">0</span></div>
+        <div class="stat-item">Toplam: <span class="stat-value blue" id="statTotal">0</span></div>
+        <div class="stat-item">Connected: <span class="stat-value green" id="statConnected">0</span></div>
+        <div class="stat-item">NotConnect: <span class="stat-value red" id="statNotconnect">0</span></div>
+        <div class="stat-item">Disabled: <span class="stat-value gray" id="statDisabled">0</span></div>
+        <div class="stat-item ml-auto"><span class="text-muted" style="font-size:12px" id="pollInfo">—</span></div>
+    </div>
+
+    <div id="noSessionMsg" style="display:none">
+        <div class="alert alert-warning">Aktif izleme oturumu yok. <a href="/migration/monitor">Monitor sayfasindan</a> baslatin.</div>
+    </div>
+
+    <div id="liveContent" style="display:none">
+        <!-- Quick Filters -->
+        <div class="filter-bar">
+            <select class="form-select" id="switchFilter" onchange="renderTable()"><option value="">Tum Switchler</option></select>
+            <input type="text" class="form-input" style="width:260px" id="searchBox" placeholder="Port, MAC, IP, hostname ara..." oninput="renderTable()">
+            <div class="ml-auto flex gap-sm">
+                <button class="btn btn-primary" id="deepPollBtn" onclick="deepPoll()">Derin Poll</button>
+                <button class="btn btn-success" onclick="exportExcel()">Excel Indir</button>
+            </div>
+        </div>
+        <!-- Advanced Filter Builder -->
+        <div class="card" style="padding:10px 14px;margin-bottom:12px">
+            <div class="flex items-center gap-sm mb-sm">
+                <strong style="font-size:12px;color:var(--color-text-secondary)">FILTRE</strong>
+                <button class="btn btn-sm btn-flat" onclick="addFilter()">+ Kural Ekle</button>
+                <button class="btn btn-sm btn-ghost" onclick="clearFilters()">Temizle</button>
+                <span class="help-text ml-auto" id="filterCount"></span>
+            </div>
+            <div id="filterRules"></div>
+        </div>
+        <div class="table-wrap">
+            <div class="table-scroll" style="max-height:72vh">
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Switch</th><th>Port</th><th>Description</th><th>Status</th><th>VLAN</th>
+                        <th>Tip</th><th>LLDP Komsu</th><th>MAC Adresi</th><th>IP Adresi</th><th>Hostname</th><th>Hatalar</th><th style="min-width:140px">Etiket</th>
+                    </tr></thead>
+                    <tbody id="tableBody"><tr><td colspan="12" class="text-center text-muted" style="padding:40px 0">Veriler yukleniyor...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const state = { ports: {}, switches: {}, eventSource: null, active: false, sessionId: null };
+
+async function init() {
+    try {
+        const r = await fetch('/migration/api/monitor/status');
+        const d = await r.json();
+        if (d.active) {
+            state.active = true;
+            state.sessionId = d.session_id;
+            document.getElementById('liveContent').style.display = 'block';
+            document.getElementById('liveDot').style.display = 'inline-block';
+            document.getElementById('statusLabel').textContent = 'Canli';
+            await loadPorts();
+            connectSSE();
+        } else if (d.last_session_id) {
+            state.active = false;
+            state.sessionId = d.last_session_id;
+            document.getElementById('liveContent').style.display = 'block';
+            document.getElementById('liveDot').style.display = 'none';
+            document.getElementById('statusLabel').textContent = 'Son oturum verileri (canli degil)';
+            await loadPorts();
+        } else {
+            document.getElementById('noSessionMsg').style.display = 'block';
+            document.getElementById('statusLabel').textContent = 'Oturum yok';
+        }
+    } catch (e) {
+        document.getElementById('noSessionMsg').style.display = 'block';
+        document.getElementById('statusLabel').textContent = 'Baglanti hatasi';
+    }
+}
+
+async function loadPorts() {
+    try {
+        const url = state.sessionId ? '/migration/api/live/ports?session_id=' + state.sessionId : '/migration/api/live/ports';
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (Array.isArray(data)) {
+            for (const p of data) {
+                const key = p.host + '::' + p.port;
+                state.ports[key] = {
+                    host: p.host, hostname: p.hostname || p.host, port: p.port,
+                    description: p.description || '', status: p.status || '',
+                    port_type: p.port_type || '', vlan: p.vlan || '',
+                    lldp_neighbor: p.lldp_neighbor || '',
+                    mac: p.mac_addresses || '', ip: p.ip_address || '',
+                    hostname_resolved: p.dns_hostname || '',
+                    errors: (p.error_counters > 0) ? String(p.error_counters) : '',
+                    po_members: p.po_members || '',
+                    tag: p.tag || '',
+                };
+                if (!state.switches[p.host]) state.switches[p.host] = p.hostname || p.host;
+                getSwColor(p.host);
+            }
+        }
+        updateSwitchFilter();
+        renderFilterUI();
+        renderTable();
+    } catch {}
+}
+
+function connectSSE() {
+    if (state.eventSource) state.eventSource.close();
+    const es = new EventSource('/migration/api/monitor/stream');
+    state.eventSource = es;
+    es.addEventListener('snapshot', e => handleSnapshot(JSON.parse(e.data)));
+    es.addEventListener('change', e => handleChange(JSON.parse(e.data)));
+    es.addEventListener('live_update', e => handleLiveUpdate(JSON.parse(e.data)));
+    es.addEventListener('poll', e => handlePoll(JSON.parse(e.data)));
+    es.addEventListener('connected', e => handleConnected(JSON.parse(e.data)));
+    es.addEventListener('stopped', () => handleStopped());
+    es.addEventListener('tag_update', e => handleTagUpdate(JSON.parse(e.data)));
+    es.addEventListener('heartbeat', () => {});
+    es.onerror = () => {};
+}
+
+function handleSnapshot(data) {
+    const h = data.host;
+    state.switches[h] = data.hostname || h;
+    getSwColor(h);
+    if (data.ports) {
+        for (const [pn, info] of Object.entries(data.ports)) {
+            const key = h + '::' + pn;
+            const existing = state.ports[key] || {};
+            state.ports[key] = { ...existing, host: h, hostname: data.hostname || h, port: pn, status: info.status, description: info.description || '', port_type: info.port_type || '' };
+        }
+    }
+    updateSwitchFilter();
+    debouncedRender();
+}
+
+function handleChange(data) {
+    const changes = data.changes || [data];
+    for (const ch of changes) {
+        const key = ch.host + '::' + ch.port;
+        if (state.ports[key]) state.ports[key].status = ch.to_status;
+        const isDown = (ch.to_status || '').toLowerCase().includes('notconnect');
+        flashRow(key, isDown ? 'flash-down' : 'flash-up');
+    }
+    debouncedRender();
+}
+
+function handleLiveUpdate(data) {
+    const h = data.host;
+    if (!data.ports) return;
+    const fieldMap = {
+        'mac_addresses': 'mac', 'ip_address': 'ip', 'dns_hostname': 'hostname_resolved',
+        'lldp_neighbor': 'lldp_neighbor', 'vlan': 'vlan', 'error_counters': 'errors',
+        'status': 'status', 'description': 'description', 'port_type': 'port_type',
+        'po_members': 'po_members',
+    };
+    for (const [pn, info] of Object.entries(data.ports)) {
+        const key = h + '::' + pn;
+        const old = state.ports[key] || {};
+        const merged = { ...old, host: h, hostname: state.switches[h] || h, port: pn };
+        const changed = [];
+        for (const [backendF, frontendF] of Object.entries(fieldMap)) {
+            const newVal = info[backendF];
+            if (newVal !== undefined && newVal !== '' && String(newVal) !== String(old[frontendF] || '')) {
+                changed.push(frontendF);
+                merged[frontendF] = (backendF === 'error_counters' && newVal > 0) ? String(newVal) : String(newVal || '');
+            }
+        }
+        state.ports[key] = merged;
+        if (changed.length) scheduleFlash(key, changed);
+    }
+    debouncedRender();
+}
+
+const pendingFlashes = {};
+const recentlyChanged = {};
+const RECENT_DURATION = 30000;
+const PIN_FIELDS = new Set(['status', 'lldp_neighbor', 'mac']);
+
+// Debounced renderTable — en fazla 200ms'de bir çalışır
+let _renderTimer = null;
+function debouncedRender() {
+    if (_renderTimer) return; // zaten planlanmış
+    _renderTimer = requestAnimationFrame(() => {
+        _renderTimer = null;
+        renderTable();
+        applyFlashes();
+    });
+}
+
+function markRecentlyChanged(key) {
+    recentlyChanged[key] = Date.now();
+    setTimeout(() => {
+        if (recentlyChanged[key] && Date.now() - recentlyChanged[key] >= RECENT_DURATION) {
+            delete recentlyChanged[key];
+            debouncedRender();
+        }
+    }, RECENT_DURATION + 100);
+}
+
+function scheduleFlash(key, fields) {
+    // Mevcut flash'ları birleştir (üst üste yazma)
+    const existing = pendingFlashes[key] || [];
+    pendingFlashes[key] = [...new Set([...existing, ...fields])];
+
+    const shouldPin = fields.some(f => PIN_FIELDS.has(f));
+    if (shouldPin) markRecentlyChanged(key);
+
+    debouncedRender();
+}
+
+function applyFlashes() {
+    for (const [key, fields] of Object.entries(pendingFlashes)) {
+        const rid = rowId(key);
+        const row = document.getElementById(rid);
+        if (row && recentlyChanged[key]) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        for (const f of fields) {
+            const cell = document.querySelector(`#${rid} .cell-${f}`);
+            if (cell) { cell.classList.remove('flash-cell'); void cell.offsetWidth; cell.classList.add('flash-cell'); }
+        }
+    }
+    for (const k in pendingFlashes) delete pendingFlashes[k];
+}
+
+function handlePoll(data) {
+    const s = data.summary || {};
+    document.getElementById('statTotal').textContent = s.total || 0;
+    document.getElementById('statConnected').textContent = s.connected || 0;
+    document.getElementById('statNotconnect').textContent = s.notconnect || 0;
+    document.getElementById('statDisabled').textContent = s.disabled || 0;
+    document.getElementById('statSwitches').textContent = (data.alive_switches || 0) + '/' + (data.total_switches || 0);
+    document.getElementById('pollInfo').textContent = 'Poll #' + (data.poll_number || 0) + ' — ' + new Date(data.timestamp).toLocaleTimeString('tr-TR');
+}
+
+function handleConnected(data) {
+    document.getElementById('statSwitches').textContent = data.count || 0;
+}
+
+function handleStopped() {
+    if (state.eventSource) state.eventSource.close();
+    state.active = false;
+    document.getElementById('liveDot').style.display = 'none';
+    document.getElementById('statusLabel').textContent = 'Oturum sona erdi';
+}
+
+function handleTagUpdate(data) {
+    const key = data.host + '::' + data.port;
+    if (state.ports[key]) {
+        state.ports[key].tag = data.tag || '';
+        // Tag hücresini anında güncelle (tam render yerine)
+        const rid = rowId(key);
+        const cell = document.querySelector(`#${rid} .tag-cell`);
+        if (cell) {
+            const tag = data.tag || '';
+            cell.innerHTML = `<div class="tag-display" onclick="editTag('${esc(key)}')">${tag ? '<span class="tag-text">'+esc(tag)+'</span>' : '<span class="tag-empty">+ Etiket</span>'}</div>`;
+            cell.classList.remove('flash-cell'); void cell.offsetWidth; cell.classList.add('flash-cell');
+        }
+    }
+}
+
+function rowId(key) { return 'r-' + key.replace(/[.:\/]/g, '_'); }
+
+function flashRow(key, cls) {
+    markRecentlyChanged(key);
+    debouncedRender();
+    // Flash animasyonu renderTable sonrası uygulanacak
+    setTimeout(() => {
+        const row = document.getElementById(rowId(key));
+        if (!row) return;
+        row.className = row.className.replace(/flash-\w+/g, '').trim();
+        void row.offsetWidth;
+        row.className = (row.className + ' ' + cls).trim();
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
+}
+
+function updateSwitchFilter() {
+    const sel = document.getElementById('switchFilter'), cur = sel.value;
+    let o = '<option value="">Tum Switchler</option>';
+    for (const [h, name] of Object.entries(state.switches)) o += `<option value="${esc(h)}">${esc(name)} (${esc(h)})</option>`;
+    sel.innerHTML = o; sel.value = cur;
+}
+
+// ==================== ADVANCED FILTER SYSTEM ====================
+const FILTER_FIELDS = [
+    { value: 'status', label: 'Status' },
+    { value: 'mac', label: 'MAC Adresi' },
+    { value: 'lldp_neighbor', label: 'LLDP Komsu' },
+    { value: 'ip', label: 'IP Adresi' },
+    { value: 'hostname_resolved', label: 'Hostname' },
+    { value: 'vlan', label: 'VLAN' },
+    { value: 'description', label: 'Description' },
+    { value: 'port_type', label: 'Port Tipi' },
+    { value: 'tag', label: 'Etiket' },
+    { value: 'port', label: 'Port Adi' },
+    { value: 'errors', label: 'Hatalar' },
+    { value: 'po_members', label: 'Po Members' },
+];
+
+const FILTER_OPS = [
+    { value: 'eq', label: 'esittir' },
+    { value: 'neq', label: 'esit degildir' },
+    { value: 'contains', label: 'icerir' },
+    { value: 'not_contains', label: 'icermez' },
+    { value: 'empty', label: 'bos' },
+    { value: 'not_empty', label: 'bos degil' },
+    { value: 'starts', label: 'ile baslar' },
+    { value: 'gt', label: 'buyuktur (>)' },
+    { value: 'lt', label: 'kucuktur (<)' },
+];
+
+const STATUS_VALUES = ['connected', 'notconnect', 'disabled', 'errdisabled'];
+
+let filterRules = [];
+
+function addFilter(logic) {
+    const idx = filterRules.length;
+    filterRules.push({ logic: idx === 0 ? '' : (logic || 'AND'), field: 'status', op: 'eq', value: 'connected' });
+    renderFilterUI();
+    renderTable();
+}
+
+function removeFilter(idx) {
+    filterRules.splice(idx, 1);
+    if (filterRules.length > 0) filterRules[0].logic = '';
+    renderFilterUI();
+    renderTable();
+}
+
+function clearFilters() {
+    filterRules = [];
+    renderFilterUI();
+    renderTable();
+}
+
+function updateFilter(idx, field, val) {
+    filterRules[idx][field] = val;
+    if (field === 'op' && (val === 'empty' || val === 'not_empty')) {
+        filterRules[idx].value = '';
+    }
+    if (field === 'field' && filterRules[idx].field === 'status') {
+        filterRules[idx].value = 'connected';
+    }
+    renderFilterUI();
+    renderTable();
+}
+
+function renderFilterUI() {
+    const container = document.getElementById('filterRules');
+    const countEl = document.getElementById('filterCount');
+
+    if (filterRules.length === 0) {
+        container.innerHTML = '<div class="help-text" style="font-size:11px">Kural ekleyerek filtreleme yapin. Ornek: Status = connected AND MAC Adresi = bos</div>';
+        countEl.textContent = '';
+        return;
+    }
+
+    countEl.textContent = filterRules.length + ' kural aktif';
+    let html = '';
+
+    filterRules.forEach((r, i) => {
+        const fieldOpts = FILTER_FIELDS.map(f => `<option value="${f.value}" ${f.value === r.field ? 'selected' : ''}>${f.label}</option>`).join('');
+        const opOpts = FILTER_OPS.map(o => `<option value="${o.value}" ${o.value === r.op ? 'selected' : ''}>${o.label}</option>`).join('');
+        const needsValue = r.op !== 'empty' && r.op !== 'not_empty';
+
+        let valueInput = '';
+        if (needsValue) {
+            if (r.field === 'status') {
+                valueInput = `<select class="form-select" onchange="updateFilter(${i},'value',this.value)">${STATUS_VALUES.map(v => `<option value="${v}" ${v === r.value ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
+            } else if (r.field === 'port_type') {
+                valueInput = `<select class="form-select" onchange="updateFilter(${i},'value',this.value)"><option value="Bakir" ${r.value === 'Bakir' ? 'selected' : ''}>Bakir</option><option value="Fiber" ${r.value === 'Fiber' ? 'selected' : ''}>Fiber</option></select>`;
+            } else {
+                valueInput = `<input type="text" class="form-input" style="width:160px" value="${esc(r.value || '')}" onchange="updateFilter(${i},'value',this.value)" placeholder="Deger...">`;
+            }
+        }
+
+        const logicHtml = i === 0 ? '<span class="filter-logic"></span>' :
+            `<select class="form-select filter-logic" onchange="updateFilter(${i},'logic',this.value)"><option value="AND" ${r.logic === 'AND' ? 'selected' : ''}>VE</option><option value="OR" ${r.logic === 'OR' ? 'selected' : ''}>VEYA</option></select>`;
+
+        html += `<div class="filter-rule">
+            ${logicHtml}
+            <select class="form-select" onchange="updateFilter(${i},'field',this.value)">${fieldOpts}</select>
+            <select class="form-select" onchange="updateFilter(${i},'op',this.value)">${opOpts}</select>
+            ${valueInput}
+            <button class="btn-remove-filter" onclick="removeFilter(${i})" title="Kaldir">&times;</button>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+}
+
+function getFilterRules() { return filterRules; }
+
+function applyFilterRules(port, rules) {
+    if (!rules || rules.length === 0) return true;
+
+    // Grup: AND ile bağlı kuralları grupla, OR arasında böl
+    // Basit yaklaşım: soldan sağa evaluate, OR varsa "veya" grubuna geç
+    let groups = [[]]; // [[rule, rule], [rule]] — OR ile ayrılmış AND grupları
+
+    for (const r of rules) {
+        if (r.logic === 'OR') {
+            groups.push([r]);
+        } else {
+            groups[groups.length - 1].push(r);
+        }
+    }
+
+    // En az bir OR grubu true olmalı
+    for (const group of groups) {
+        let groupPass = true;
+        for (const r of group) {
+            if (!evalRule(port, r)) { groupPass = false; break; }
+        }
+        if (groupPass) return true;
+    }
+    return false;
+}
+
+function evalRule(port, rule) {
+    const fieldMap = { mac: 'mac', ip: 'ip', hostname_resolved: 'hostname_resolved', lldp_neighbor: 'lldp_neighbor', status: 'status', vlan: 'vlan', description: 'description', port_type: 'port_type', tag: 'tag', port: 'port', errors: 'errors', po_members: 'po_members' };
+    const raw = port[fieldMap[rule.field] || rule.field] || '';
+    const val = String(raw).toLowerCase();
+    const target = (rule.value || '').toLowerCase();
+
+    switch (rule.op) {
+        case 'eq': return val === target;
+        case 'neq': return val !== target;
+        case 'contains': return val.includes(target);
+        case 'not_contains': return !val.includes(target);
+        case 'empty': return val === '';
+        case 'not_empty': return val !== '';
+        case 'starts': return val.startsWith(target);
+        case 'gt': return parseFloat(val) > parseFloat(target);
+        case 'lt': return parseFloat(val) < parseFloat(target);
+        default: return true;
+    }
+}
+
+// ==================== TRUNCATE HELPER ====================
+const TRUNCATE_LIMIT = 10;
+
+function truncateList(text, field, key) {
+    if (!text) return '';
+    const items = text.split(',').map(s => s.trim()).filter(Boolean);
+    if (items.length <= TRUNCATE_LIMIT) return esc(text);
+
+    const shown = items.slice(0, TRUNCATE_LIMIT).join(', ');
+    const remaining = items.length - TRUNCATE_LIMIT;
+    const popupId = 'trunc-' + field + '-' + key.replace(/[.:\/]/g, '_');
+
+    return esc(shown) + ` <span class="trunc-more-wrap">` +
+        `<button class="trunc-more-btn" onclick="toggleTruncPopup('${popupId}',event)">+${remaining} daha</button>` +
+        `<div class="trunc-popup" id="${popupId}">` +
+        `<div class="trunc-popup-header">${esc(field.toUpperCase())} (${items.length} adet) ` +
+        `<button class="trunc-popup-close" onclick="toggleTruncPopup('${popupId}',event)">&times;</button></div>` +
+        `<div class="trunc-popup-body">${items.map(i => `<div class="trunc-popup-item">${esc(i)}</div>`).join('')}</div>` +
+        `</div></span>`;
+}
+
+function toggleTruncPopup(id, e) {
+    e.stopPropagation();
+    const el = document.getElementById(id);
+    if (!el) return;
+    const wasOpen = el.classList.contains('open');
+    // Tüm açık popup'ları kapat
+    document.querySelectorAll('.trunc-popup.open').forEach(p => p.classList.remove('open'));
+    if (!wasOpen) el.classList.add('open');
+}
+
+// ==================== TABLE RENDERING ====================
+function renderTable() {
+    const tbody = document.getElementById('tableBody');
+    const search = document.getElementById('searchBox').value.toLowerCase();
+    const swF = document.getElementById('switchFilter').value;
+    let rows = Object.values(state.ports);
+    const now = Date.now();
+    rows.sort((a, b) => {
+        const keyA = a.host + '::' + a.port;
+        const keyB = b.host + '::' + b.port;
+        const recentA = recentlyChanged[keyA] && (now - recentlyChanged[keyA] < RECENT_DURATION) ? recentlyChanged[keyA] : 0;
+        const recentB = recentlyChanged[keyB] && (now - recentlyChanged[keyB] < RECENT_DURATION) ? recentlyChanged[keyB] : 0;
+
+        // Son değişenler en üste (yeniden eskiye)
+        if (recentA && !recentB) return -1;
+        if (!recentA && recentB) return 1;
+        if (recentA && recentB) return recentB - recentA; // en son değişen en üstte
+
+        // Normal sıralama: hostname → port numarası
+        const hn = (a.hostname || a.host || '').localeCompare(b.hostname || b.host || '');
+        if (hn !== 0) return hn;
+        return (parseInt((a.port || '').replace(/\D/g, '')) || 0) - (parseInt((b.port || '').replace(/\D/g, '')) || 0);
+    });
+
+    // Ters eşleme: fiziksel port → hangi Po'ya üye
+    const memberToPoMap = {}; // {"host::Et1/1": "Po1", ...}
+    for (const p of rows) {
+        if ((p.port || '').startsWith('Po') && p.po_members) {
+            const members = p.po_members.split(',').map(m => m.trim()).filter(Boolean);
+            for (const mem of members) {
+                memberToPoMap[p.host + '::' + mem] = p.port;
+            }
+        }
+    }
+
+    const rules = getFilterRules();
+    let html = '', visibleCount = 0;
+    for (const p of rows) {
+        if (swF && p.host !== swF) continue;
+        if (search) {
+            const hay = [p.port, p.description, p.mac, p.ip, p.hostname_resolved, p.lldp_neighbor, p.hostname, p.host, p.vlan, p.errors, p.tag].join(' ').toLowerCase();
+            if (!hay.includes(search)) continue;
+        }
+        if (!applyFilterRules(p, rules)) continue;
+        visibleCount++;
+        const key = p.host + '::' + p.port;
+        const rid = rowId(key);
+        const sl = (p.status || '').toLowerCase();
+        const isN = sl.includes('notconnect') || sl.includes('noconnpresent');
+        const badge = sl === 'connected' ? 'badge-connected' : isN ? 'badge-notconnect' : 'badge-disabled';
+        const color = getSwColor(p.host);
+        const isPo = (p.port || '').startsWith('Po');
+        const isRecent = recentlyChanged[key] && (now - recentlyChanged[key] < RECENT_DURATION);
+        const rowClass = (isPo ? 'po-row ' : '') + (isRecent ? 'recent-changed' : '');
+
+        let portCell = `<strong>${esc(p.port)}</strong>`;
+        // Fiziksel port bir Po'ya üye mi?
+        const parentPo = !isPo ? memberToPoMap[key] : null;
+        if (parentPo) {
+            const poKey = p.host + '::' + parentPo;
+            const poPort = state.ports[poKey];
+            const poMac = poPort ? (poPort.mac || '') : '';
+            const poIp = poPort ? (poPort.ip || '') : '';
+            let poTooltip = parentPo;
+            if (poMac) poTooltip += ' | MAC: ' + poMac;
+            if (poIp) poTooltip += ' | IP: ' + poIp;
+            portCell += ` <span class="po-member-badge" title="${esc(poTooltip)}">→${esc(parentPo)}</span>`;
+        }
+        if (isPo) {
+            portCell += ' <span class="po-badge">LAG</span>';
+            if (p.po_members) {
+                const members = p.po_members.split(',').map(m => m.trim()).filter(Boolean);
+                const memberId = 'po-' + rid;
+                let memberHtml = '';
+                for (const mem of members) {
+                    const memKey = p.host + '::' + mem;
+                    const memPort = state.ports[memKey];
+                    const memSt = memPort ? memPort.status || '?' : '?';
+                    const memBadge = memSt === 'connected' ? 'color:var(--color-success)' : 'color:var(--color-danger)';
+                    memberHtml += `<div class="po-member"><span class="po-member-name">${esc(mem)}</span><span class="po-member-status" style="${memBadge}">${esc(memSt)}</span></div>`;
+                }
+                portCell += ` <span class="po-members-wrap"><span class="po-members-btn" onclick="togglePoMembers('${memberId}',event)">${members.length} member</span><div class="po-members-popup" id="${memberId}">${memberHtml}</div></span>`;
+            }
+        }
+
+        html += `<tr id="${rid}" class="${rowClass}">` +
+            `<td><span class="sw-badge" style="background:${color}15;color:${color}">${esc(p.hostname || p.host)}</span></td>` +
+            `<td>${portCell}</td>` +
+            `<td class="cell-description">${esc(p.description || '')}</td>` +
+            `<td class="cell-status"><span class="badge ${badge}">${esc(p.status || '')}</span></td>` +
+            `<td class="cell-vlan">${esc(p.vlan || '')}</td>` +
+            `<td class="cell-port_type">${esc(p.port_type || '')}</td>` +
+            `<td class="cell-lldp_neighbor">${esc(p.lldp_neighbor || '')}</td>` +
+            `<td class="mono cell-mac">${truncateList(p.mac || '', 'mac', key)}</td>` +
+            `<td class="mono cell-ip">${truncateList(p.ip || '', 'ip', key)}</td>` +
+            `<td class="cell-hostname_resolved">${truncateList(p.hostname_resolved || '', 'hostname', key)}</td>` +
+            `<td class="cell-errors"><span class="errors-text">${esc(p.errors || '')}</span></td>` +
+            `<td class="tag-cell cell-tag"><div class="tag-display" onclick="editTag('${esc(key)}')">${p.tag ? '<span class="tag-text">'+esc(p.tag)+'</span>' : '<span class="tag-empty">+ Etiket</span>'}</div></td></tr>`;
+    }
+    if (!html) html = '<tr><td colspan="12" class="text-center text-muted" style="padding:40px 0">Filtre kriterlerine uyan port yok</td></tr>';
+    tbody.innerHTML = html;
+}
+
+async function deepPoll() {
+    const btn = document.getElementById('deepPollBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Polling...';
+    try {
+        const r = await fetch('/migration/api/live/deep-poll', { method: 'POST' });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Deep poll basarisiz'); }
+    } catch (e) { alert('Hata: ' + e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Derin Poll'; }
+}
+
+function togglePoMembers(id, event) {
+    event.stopPropagation();
+    const popup = document.getElementById(id);
+    if (!popup) return;
+    document.querySelectorAll('.po-members-popup.show').forEach(p => { if (p.id !== id) p.classList.remove('show'); });
+    popup.classList.toggle('show');
+}
+document.addEventListener('click', () => {
+    document.querySelectorAll('.po-members-popup.show').forEach(p => p.classList.remove('show'));
+    document.querySelectorAll('.trunc-popup.open').forEach(p => p.classList.remove('open'));
+});
+
+function editTag(key) {
+    const p = state.ports[key];
+    if (!p) return;
+    const rid = rowId(key);
+    const cell = document.querySelector(`#${rid} .tag-cell`);
+    if (!cell) return;
+    const current = p.tag || '';
+    cell.innerHTML = `<input class="tag-input" type="text" value="${esc(current)}"
+        onblur="saveTag('${esc(key)}', this.value)"
+        onkeydown="if(event.key==='Enter'){this.blur()}else if(event.key==='Escape'){this.value='${esc(current)}';this.blur()}"
+        placeholder="Etiket girin...">`;
+    cell.querySelector('input').focus();
+    cell.querySelector('input').select();
+}
+
+async function saveTag(key, value) {
+    const p = state.ports[key];
+    if (!p) return;
+    const tag = value.trim();
+    p.tag = tag;
+    try {
+        await fetch('/migration/api/live/tag', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host: p.host, port: p.port, tag, session_id: state.sessionId }),
+        });
+    } catch (e) {
+        console.error('Tag kayit hatasi:', e);
+    }
+    const rid = rowId(key);
+    const cell = document.querySelector(`#${rid} .tag-cell`);
+    if (cell) {
+        cell.innerHTML = `<div class="tag-display" onclick="editTag('${esc(key)}')">${tag ? '<span class="tag-text">'+esc(tag)+'</span>' : '<span class="tag-empty">+ Etiket</span>'}</div>`;
+    }
+}
+
+async function exportExcel() {
+    try {
+        const r = await fetch('/migration/api/live/export', { method: 'POST' });
+        if (!r.ok) { alert('Export basarisiz'); return; }
+        const d = await r.json();
+        if (d.filename) window.open('/migration/download/' + encodeURIComponent(d.filename), '_blank');
+    } catch (e) { alert('Export hatasi: ' + e.message); }
+}
+
+init();
+</script>
+</body>
+</html>

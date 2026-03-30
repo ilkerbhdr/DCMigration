@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Network Topology — DC Migration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/migration/static/style.css">
+<style>
+#cy { width:100%; height:calc(100vh - 210px); min-height:500px; }
+.topo-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid var(--color-border-light); background:var(--color-bg); }
+.topo-toolbar .sep { width:1px; height:24px; background:var(--color-border); }
+
+/* Detail panel */
+.detail-panel { position:fixed; right:-420px; top:0; width:400px; height:100vh; background:white; box-shadow:-4px 0 20px rgba(0,0,0,0.12); z-index:200; transition:right 0.3s ease; overflow-y:auto; }
+.detail-panel.open { right:0; }
+.detail-panel-header { padding:16px; border-bottom:1px solid var(--color-border-light); display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; background:white; z-index:1; }
+.detail-panel-body { padding:16px; }
+.detail-panel-close { background:none; border:none; font-size:22px; cursor:pointer; color:var(--color-text-muted); padding:4px 8px; }
+.detail-panel-close:hover { color:var(--color-danger); }
+.detail-section { margin-bottom:16px; }
+.detail-section-title { font-size:12px; font-weight:700; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }
+.detail-stat { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--color-border-light); font-size:13px; }
+.detail-stat:last-child { border-bottom:none; }
+.detail-port-list { max-height:300px; overflow-y:auto; }
+.detail-port-item { padding:5px 0; border-bottom:1px solid var(--color-border-light); font-size:12px; display:flex; justify-content:space-between; }
+
+/* Legend */
+.legend { display:flex; gap:12px; flex-wrap:wrap; font-size:11px; align-items:center; }
+.legend-item { display:flex; align-items:center; gap:4px; }
+.legend-dot { width:12px; height:12px; border-radius:3px; }
+.legend-line { width:20px; height:3px; border-radius:2px; }
+
+/* Search highlight */
+.topo-search { width:180px; }
+
+/* Empty state */
+.topo-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:400px; color:var(--color-text-muted); }
+.topo-empty svg { margin-bottom:16px; opacity:0.3; }
+
+/* Node count badge */
+.node-count { font-size:11px; background:var(--color-bg); padding:2px 8px; border-radius:10px; color:var(--color-text-secondary); }
+</style>
+</head>
+<body>
+<script src="/migration/static/common.js"></script>
+<script>document.body.insertAdjacentHTML('afterbegin', renderTopbar('topology'));</script>
+
+<div class="page page-wide">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Network Topology</h1>
+            <p class="page-subtitle">LLDP komşuluk verilerinden ağ topolojisi görselleştirmesi</p>
+        </div>
+        <div class="flex gap-sm items-center">
+            <span class="node-count" id="nodeCount">0 node, 0 link</span>
+        </div>
+    </div>
+
+    <div class="card" style="padding:0; overflow:hidden;">
+        <!-- Toolbar -->
+        <div class="topo-toolbar">
+            <select id="dataSource" class="form-select" style="width:220px;" onchange="loadTopology()">
+                <option value="last">Son Toplama (localStorage)</option>
+                <option value="live">Canli Oturum / Son Session</option>
+            </select>
+            <span class="sep"></span>
+            <button class="btn btn-sm btn-ghost" id="layoutBtn" onclick="toggleLayout()">Dagre (Hiyerarsik)</button>
+            <button class="btn btn-sm btn-ghost" onclick="cy.fit(40)">Sigdir</button>
+            <span class="sep"></span>
+            <input type="text" class="form-input topo-search" id="searchNode" placeholder="Cihaz ara..." oninput="searchNodes()">
+            <span class="sep"></span>
+            <button class="btn btn-sm btn-ghost" onclick="exportPNG()">PNG</button>
+            <button class="btn btn-sm btn-ghost" onclick="exportSVG()">SVG</button>
+            <div class="ml-auto legend">
+                <span class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span>Spine</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#8b5cf6"></span>Leaf</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#06b6d4"></span>MGMT</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#ef4444;border-radius:0;transform:rotate(45deg);width:10px;height:10px"></span>Firewall</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#10b981"></span>Server</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Storage</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#94a3b8;border-radius:50%"></span>Diger</span>
+                <span style="margin-left:8px">|</span>
+                <span class="legend-item"><span class="legend-line" style="background:#3b82f6"></span>Fiber</span>
+                <span class="legend-item"><span class="legend-line" style="background:#f59e0b"></span>Bakir</span>
+                <span class="legend-item"><span class="legend-line" style="background:#94a3b8;height:5px"></span>LAG</span>
+            </div>
+        </div>
+
+        <!-- Graph container -->
+        <div id="cy"></div>
+
+        <!-- Empty state -->
+        <div id="emptyState" class="topo-empty hidden">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="10" y2="16"/><line x1="15.5" y1="7.5" x2="14" y2="16"/><line x1="9" y1="6" x2="15" y2="6"/></svg>
+            <p style="font-size:15px;font-weight:600;">Topoloji verisi yok</p>
+            <p style="font-size:13px;">Port Mapping sayfasindan veri toplayin veya bir baseline secin.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Detail Panel -->
+<div class="detail-panel" id="detailPanel">
+    <div class="detail-panel-header">
+        <div>
+            <h3 id="detailTitle" style="font-size:16px;margin:0;">—</h3>
+            <p id="detailSubtitle" class="help-text" style="margin:0;"></p>
+        </div>
+        <button class="detail-panel-close" onclick="closeDetail()">&times;</button>
+    </div>
+    <div class="detail-panel-body" id="detailBody"></div>
+</div>
+
+<!-- Cytoscape + Dagre CDN -->
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+
+<script>
+// Register dagre layout
+cytoscape.use(cytoscapeDagre);
+
+let cy = null;
+let currentLayout = 'dagre';
+let graphData = { nodes: [], edges: [], portMap: {} };
+
+// ==================== NODE CLASSIFICATION ====================
+function classifyNode(hostname, isManaged) {
+    const h = (hostname || '').toLowerCase();
+    if (h.includes('spine'))  return { role: 'spine',    tier: 0, color: '#3b82f6', shape: 'round-rectangle' };
+    if (h.includes('leaf'))   return { role: 'leaf',     tier: 1, color: '#8b5cf6', shape: 'round-rectangle' };
+    if (h.includes('mgmt'))   return { role: 'mgmt',     tier: 1, color: '#06b6d4', shape: 'round-rectangle' };
+    if (h.includes('core'))   return { role: 'core',     tier: 0, color: '#2563eb', shape: 'round-rectangle' };
+    if (h.includes('agg'))    return { role: 'agg',      tier: 1, color: '#7c3aed', shape: 'round-rectangle' };
+    if (h.includes('fw') || h.includes('firewall') || h.includes('palo') || h.includes('forti'))
+                              return { role: 'firewall', tier: 2, color: '#ef4444', shape: 'diamond' };
+    if (h.includes('srv') || h.includes('server') || h.includes('esx') || h.includes('vcenter'))
+                              return { role: 'server',   tier: 3, color: '#10b981', shape: 'rectangle' };
+    if (h.includes('stor') || h.includes('san') || h.includes('netapp') || h.includes('datadomain') || h.includes('unity'))
+                              return { role: 'storage',  tier: 3, color: '#f59e0b', shape: 'barrel' };
+    if (h.includes('exadata') || h.includes('oracle'))
+                              return { role: 'database', tier: 3, color: '#dc2626', shape: 'rectangle' };
+    if (h.includes('ibm'))    return { role: 'server',   tier: 3, color: '#10b981', shape: 'rectangle' };
+    if (isManaged)            return { role: 'switch',   tier: 1, color: '#6366f1', shape: 'round-rectangle' };
+    return { role: 'unknown', tier: 3, color: '#94a3b8', shape: 'ellipse' };
+}
+
+// ==================== BUILD GRAPH ====================
+function buildGraph(topology, ports) {
+    const switchSet = new Set();
+    const nodeMap = {};
+    const portMap = {};
+
+    // Managed switches (ports listesinden)
+    for (const p of (ports || [])) {
+        const sw = p.switch || p.hostname || '';
+        if (!sw) continue;
+        switchSet.add(sw);
+        if (!nodeMap[sw]) {
+            nodeMap[sw] = { hostname: sw, host: p.host || '', ports: [], managed: true };
+        }
+        nodeMap[sw].ports.push(p);
+        portMap[sw + '::' + (p.port || '')] = p;
+    }
+
+    // Topology edge'lerinden neighbor node'ları
+    for (const t of (topology || [])) {
+        const src = t.switch || '';
+        const tgt = t.neighbor_device || '';
+        if (!src || !tgt) continue;
+
+        if (src && !nodeMap[src]) {
+            switchSet.add(src);
+            nodeMap[src] = { hostname: src, host: t.host || '', ports: [], managed: true };
+        }
+        if (tgt && !nodeMap[tgt]) {
+            nodeMap[tgt] = { hostname: tgt, host: '', ports: [], managed: false };
+        }
+    }
+
+    // Cytoscape node'ları
+    const nodes = [];
+    for (const [id, info] of Object.entries(nodeMap)) {
+        const cls = classifyNode(id, info.managed);
+        const totalPorts = info.ports.length;
+        const connected = info.ports.filter(p => (p.status || '').toLowerCase() === 'connected').length;
+
+        nodes.push({
+            data: {
+                id: id,
+                label: id.length > 25 ? id.substring(0, 22) + '...' : id,
+                fullLabel: id,
+                host: info.host,
+                role: cls.role,
+                tier: cls.tier,
+                color: cls.color,
+                totalPorts: totalPorts,
+                connected: connected,
+                managed: info.managed,
+            },
+            classes: cls.role,
+        });
+    }
+
+    // Edge deduplication
+    const edgeSet = new Set();
+    const edges = [];
+    for (const t of (topology || [])) {
+        const src = t.switch || '';
+        const tgt = t.neighbor_device || '';
+        if (!src || !tgt) continue;
+
+        const edgeKey = [src, tgt].sort().join('::') + '|' + [t.local_port || '', t.neighbor_port || ''].sort().join('::');
+        if (edgeSet.has(edgeKey)) continue;
+        edgeSet.add(edgeKey);
+
+        const portInfo = portMap[src + '::' + t.local_port];
+        const portType = portInfo ? (portInfo.port_type || portInfo.port || '') : '';
+        const isFiber = portType.toLowerCase().includes('fiber') || portType.toLowerCase().includes('sfp');
+        const isCopper = portType.toLowerCase().includes('bakır') || portType.toLowerCase().includes('bakir') || portType.toLowerCase().includes('copper');
+        const isLag = (t.local_port || '').startsWith('Po');
+
+        let edgeColor = '#94a3b8';
+        if (isFiber) edgeColor = '#3b82f6';
+        else if (isCopper) edgeColor = '#f59e0b';
+
+        edges.push({
+            data: {
+                id: edgeKey,
+                source: src,
+                target: tgt,
+                sourcePort: t.local_port || '',
+                targetPort: t.neighbor_port || '',
+                portType: portType,
+                edgeColor: edgeColor,
+                width: isLag ? 5 : 2,
+                label: (t.local_port || '') + ' ↔ ' + (t.neighbor_port || ''),
+            }
+        });
+    }
+
+    graphData = { nodes, edges, portMap };
+    return { nodes, edges };
+}
+
+// ==================== INIT CYTOSCAPE ====================
+function initCytoscape(elements) {
+    if (cy) cy.destroy();
+
+    cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: elements,
+        style: [
+            // Node base style
+            { selector: 'node', style: {
+                'label': 'data(label)',
+                'background-color': 'data(color)',
+                'color': '#1e293b',
+                'text-valign': 'bottom',
+                'text-halign': 'center',
+                'font-size': '11px',
+                'font-family': 'Inter, sans-serif',
+                'font-weight': 600,
+                'text-margin-y': 8,
+                'width': 50, 'height': 40,
+                'border-width': 2,
+                'border-color': 'data(color)',
+                'text-max-width': '120px',
+                'text-wrap': 'ellipsis',
+                'min-zoomed-font-size': 8,
+            }},
+            // Shapes per role
+            { selector: '.spine, .core', style: { 'shape': 'round-rectangle', 'width': 65, 'height': 45, 'border-width': 3 }},
+            { selector: '.leaf, .mgmt, .agg, .switch', style: { 'shape': 'round-rectangle', 'width': 55, 'height': 40 }},
+            { selector: '.firewall', style: { 'shape': 'diamond', 'width': 50, 'height': 50 }},
+            { selector: '.server, .database', style: { 'shape': 'rectangle', 'width': 45, 'height': 35 }},
+            { selector: '.storage', style: { 'shape': 'barrel', 'width': 45, 'height': 40 }},
+            { selector: '.unknown', style: { 'shape': 'ellipse', 'width': 40, 'height': 40, 'border-style': 'dashed' }},
+            // Managed vs unmanaged
+            { selector: 'node[?managed]', style: { 'border-width': 3 }},
+            { selector: 'node[!managed]', style: { 'border-width': 1, 'opacity': 0.85 }},
+            // Edge style
+            { selector: 'edge', style: {
+                'width': 'data(width)',
+                'line-color': 'data(edgeColor)',
+                'target-arrow-color': 'data(edgeColor)',
+                'curve-style': 'bezier',
+                'opacity': 0.7,
+                'label': 'data(label)',
+                'font-size': '8px',
+                'font-family': 'Inter, sans-serif',
+                'color': '#64748b',
+                'text-rotation': 'autorotate',
+                'text-margin-y': -8,
+                'min-zoomed-font-size': 10,
+                'text-background-color': '#fff',
+                'text-background-opacity': 0.8,
+                'text-background-padding': '2px',
+            }},
+            // Hover/highlight states
+            { selector: 'node.highlighted', style: { 'border-width': 4, 'border-color': '#f59e0b', 'z-index': 10 }},
+            { selector: 'node.dimmed', style: { 'opacity': 0.15 }},
+            { selector: 'edge.dimmed', style: { 'opacity': 0.08 }},
+            { selector: 'edge.highlighted', style: { 'opacity': 1, 'width': 4, 'z-index': 10 }},
+            // Search match
+            { selector: 'node.search-match', style: { 'border-width': 5, 'border-color': '#f59e0b', 'shadow-blur': 12, 'shadow-color': '#f59e0b', 'shadow-opacity': 0.5 }},
+        ],
+        layout: getLayoutOptions(),
+        wheelSensitivity: 0.3,
+        boxSelectionEnabled: false,
+    });
+
+    // Interactions
+    cy.on('mouseover', 'node', function(e) {
+        const node = e.target;
+        cy.elements().addClass('dimmed');
+        node.removeClass('dimmed').addClass('highlighted');
+        node.connectedEdges().removeClass('dimmed').addClass('highlighted');
+        node.neighborhood('node').removeClass('dimmed');
+    });
+
+    cy.on('mouseout', 'node', function() {
+        cy.elements().removeClass('dimmed highlighted');
+    });
+
+    cy.on('tap', 'node', function(e) {
+        showDetail(e.target.data());
+    });
+
+    cy.on('tap', function(e) {
+        if (e.target === cy) closeDetail();
+    });
+
+    // Update count
+    document.getElementById('nodeCount').textContent = `${elements.nodes.length} node, ${elements.edges.length} link`;
+}
+
+function getLayoutOptions() {
+    if (currentLayout === 'dagre') {
+        return {
+            name: 'dagre',
+            rankDir: 'TB',
+            rankSep: 100,
+            nodeSep: 60,
+            edgeSep: 20,
+            animate: true,
+            animationDuration: 400,
+            rank: function(node) { return node.data('tier'); },
+        };
+    }
+    return {
+        name: 'cose',
+        idealEdgeLength: function() { return 150; },
+        nodeRepulsion: function() { return 8000; },
+        gravity: 0.25,
+        animate: true,
+        animationDuration: 400,
+    };
+}
+
+function toggleLayout() {
+    currentLayout = currentLayout === 'dagre' ? 'cose' : 'dagre';
+    const btn = document.getElementById('layoutBtn');
+    btn.textContent = currentLayout === 'dagre' ? 'Dagre (Hiyerarsik)' : 'Cose (Serbest)';
+    cy.layout(getLayoutOptions()).run();
+}
+
+// ==================== DATA LOADING ====================
+async function loadTopology() {
+    const source = document.getElementById('dataSource').value;
+    let topology = [], ports = [];
+
+    try {
+        if (source === 'last') {
+            try {
+                topology = JSON.parse(localStorage.getItem('lastCollectTopology') || '[]');
+                ports = JSON.parse(localStorage.getItem('lastCollectPorts') || '[]');
+            } catch { topology = []; ports = []; }
+        } else if (source === 'live') {
+            const res = await fetch('/migration/api/topology/data?source=live');
+            if (res.ok) {
+                const data = await res.json();
+                topology = data.topology || [];
+                ports = data.ports || [];
+            }
+        } else if (source.startsWith('baseline:')) {
+            const bid = source.split(':')[1];
+            const res = await fetch('/migration/api/topology/data?source=baseline&id=' + bid);
+            if (res.ok) {
+                const data = await res.json();
+                topology = data.topology || [];
+                ports = data.ports || [];
+            }
+        }
+    } catch (err) {
+        console.error('Topology load error:', err);
+    }
+
+    const emptyEl = document.getElementById('emptyState');
+    const cyEl = document.getElementById('cy');
+
+    if (topology.length === 0 && ports.length === 0) {
+        emptyEl.classList.remove('hidden');
+        cyEl.style.display = 'none';
+        document.getElementById('nodeCount').textContent = '0 node, 0 link';
+        return;
+    }
+
+    emptyEl.classList.add('hidden');
+    cyEl.style.display = 'block';
+
+    const { nodes, edges } = buildGraph(topology, ports);
+    initCytoscape({ nodes, edges });
+}
+
+async function loadBaselineOptions() {
+    try {
+        const res = await fetch('/migration/api/baseline/list');
+        if (!res.ok) return;
+        const baselines = await res.json();
+        const sel = document.getElementById('dataSource');
+        if (baselines.length > 0) {
+            const group = document.createElement('optgroup');
+            group.label = 'Baseline\'lar';
+            for (const b of baselines) {
+                const opt = document.createElement('option');
+                opt.value = 'baseline:' + b.id;
+                opt.textContent = b.label + ' (' + (b.timestamp ? new Date(b.timestamp).toLocaleDateString('tr-TR') : '') + ')';
+                group.appendChild(opt);
+            }
+            sel.appendChild(group);
+        }
+    } catch {}
+}
+
+// ==================== DETAIL PANEL ====================
+function showDetail(data) {
+    const panel = document.getElementById('detailPanel');
+    document.getElementById('detailTitle').textContent = data.fullLabel || data.id;
+    document.getElementById('detailSubtitle').textContent = data.host ? 'IP: ' + data.host : (data.managed ? 'Managed Switch' : 'LLDP Neighbor');
+
+    const role = data.role || 'unknown';
+    const roleName = { spine:'Spine Switch', leaf:'Leaf Switch', mgmt:'Management Switch', core:'Core Switch',
+        agg:'Aggregation Switch', firewall:'Firewall', server:'Sunucu', storage:'Storage', database:'Database', switch:'Switch', unknown:'Bilinmeyen' };
+
+    let html = '<div class="detail-section">';
+    html += '<div class="detail-section-title">Genel Bilgiler</div>';
+    html += `<div class="detail-stat"><span>Tip</span><strong>${esc(roleName[role] || role)}</strong></div>`;
+    if (data.host) html += `<div class="detail-stat"><span>IP Adresi</span><span class="mono">${esc(data.host)}</span></div>`;
+    html += `<div class="detail-stat"><span>Toplam Port</span><strong>${data.totalPorts || 0}</strong></div>`;
+    html += `<div class="detail-stat"><span>Connected</span><strong style="color:var(--color-success)">${data.connected || 0}</strong></div>`;
+    html += `<div class="detail-stat"><span>Yonetilen</span><strong>${data.managed ? 'Evet' : 'Hayir'}</strong></div>`;
+    html += '</div>';
+
+    // Connected neighbors
+    const edges = cy.getElementById(data.id).connectedEdges();
+    if (edges.length > 0) {
+        html += '<div class="detail-section"><div class="detail-section-title">Baglanti (' + edges.length + ')</div>';
+        html += '<div class="detail-port-list">';
+        edges.forEach(e => {
+            const ed = e.data();
+            const peer = ed.source === data.id ? ed.target : ed.source;
+            const localPort = ed.source === data.id ? ed.sourcePort : ed.targetPort;
+            const remotePort = ed.source === data.id ? ed.targetPort : ed.sourcePort;
+            html += `<div class="detail-port-item"><span class="mono">${esc(localPort)}</span><span>↔</span><span><strong>${esc(peer)}</strong> <span class="mono">${esc(remotePort)}</span></span></div>`;
+        });
+        html += '</div></div>';
+    }
+
+    // Port details (if managed)
+    const nodeId = data.id;
+    const nodePorts = Object.entries(graphData.portMap).filter(([k]) => k.startsWith(nodeId + '::'));
+    if (nodePorts.length > 0) {
+        // VLAN dağılımı
+        const vlans = {};
+        nodePorts.forEach(([, p]) => { const v = p.vlan || '—'; vlans[v] = (vlans[v] || 0) + 1; });
+        const vlanEntries = Object.entries(vlans).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        if (vlanEntries.length > 0) {
+            html += '<div class="detail-section"><div class="detail-section-title">VLAN Dagilimi</div>';
+            vlanEntries.forEach(([v, c]) => { html += `<div class="detail-stat"><span>VLAN ${esc(v)}</span><strong>${c}</strong></div>`; });
+            html += '</div>';
+        }
+    }
+
+    document.getElementById('detailBody').innerHTML = html;
+    panel.classList.add('open');
+}
+
+function closeDetail() {
+    document.getElementById('detailPanel').classList.remove('open');
+}
+
+// ==================== SEARCH ====================
+function searchNodes() {
+    const q = document.getElementById('searchNode').value.toLowerCase().trim();
+    cy.nodes().removeClass('search-match');
+    if (!q) return;
+    cy.nodes().forEach(n => {
+        if ((n.data('fullLabel') || '').toLowerCase().includes(q) || (n.data('host') || '').includes(q)) {
+            n.addClass('search-match');
+        }
+    });
+    const matches = cy.nodes('.search-match');
+    if (matches.length > 0) cy.animate({ fit: { eles: matches, padding: 80 } }, { duration: 400 });
+}
+
+// ==================== EXPORT ====================
+function exportPNG() {
+    if (!cy) return;
+    const b64 = cy.png({ output: 'base64uri', scale: 2, bg: '#ffffff', full: true });
+    const a = document.createElement('a');
+    a.href = b64;
+    a.download = 'topology-' + new Date().toISOString().slice(0, 10) + '.png';
+    a.click();
+}
+
+function exportSVG() {
+    if (!cy) return;
+    const svgContent = cy.svg({ scale: 1, full: true, bg: '#ffffff' });
+    const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'topology-' + new Date().toISOString().slice(0, 10) + '.svg';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+// ==================== INIT ====================
+async function init() {
+    await loadBaselineOptions();
+    loadTopology();
+}
+init();
+
+// Close detail panel on Escape
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+</script>
+</body>
+</html>

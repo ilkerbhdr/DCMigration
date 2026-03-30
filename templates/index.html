@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arista Port Mapping</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/migration/static/style.css">
+    <style>
+        .fw-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; align-items: end; margin-bottom: 10px; }
+        .fw-creds { display: grid; grid-template-columns: 1fr 1fr 100px; gap: 10px; align-items: end; }
+        .result-actions { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+        .log-icon.ok { color: var(--color-success); }
+        .log-icon.err { color: var(--color-danger); }
+        .log-icon.spin { color: var(--color-accent); animation: spin 0.8s linear infinite; display: inline-block; }
+    </style>
+</head>
+<body>
+    <div id="topbar"></div>
+
+    <div class="page">
+        <!-- Page Header -->
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Port Mapping</h1>
+                <p class="page-subtitle">Switch port bilgilerini topla ve Excel olarak indir</p>
+            </div>
+        </div>
+
+        <!-- Credential Profiles Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                    Credential Profilleri
+                </span>
+                <span class="card-badge" id="profileCount">0 profil</span>
+            </div>
+            <p class="help-text mb-sm">
+                Profil oluşturup switchlerde secerek her seferinde kullanici adi/sifre girmekten kurtulun.
+            </p>
+            <div id="profileList" style="display:flex; flex-wrap:wrap; gap:8px;">
+                <!-- Profiles rendered here -->
+            </div>
+            <button class="btn btn-flat btn-block mt-sm" onclick="openProfileModal()">+ Yeni Profil</button>
+        </div>
+
+        <!-- Switch List Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
+                    Switch Listesi
+                </span>
+            </div>
+            <div class="flex items-center gap-sm mb-sm flex-wrap">
+                <select class="form-select" id="groupSelectCollect" onchange="onGroupSelectCollect()" style="flex:1;max-width:300px;">
+                    <option value="">-- Switch Grubu Sec --</option>
+                </select>
+                <span class="help-text">veya manuel ekleyin</span>
+            </div>
+            <div id="switches">
+                <!-- Switch rows rendered here -->
+            </div>
+            <button class="btn btn-flat btn-block" onclick="addSwitch()">+ Switch Ekle</button>
+            <button class="btn btn-primary btn-block btn-lg mt-md" id="collectBtn" onclick="collect()">
+                Topla ve Excel Indir
+            </button>
+        </div>
+
+        <!-- Progress Panel -->
+        <div id="progressPanel" class="progress-panel">
+            <div class="card-header">
+                <span class="card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    Islem Durumu
+                </span>
+            </div>
+            <div class="progress-header">
+                <span style="font-size:14px;font-weight:600;color:var(--color-text);" id="phaseLabel">Hazirlaniyor...</span>
+                <span style="font-size:13px;color:var(--color-text-secondary);" id="stepCounter"></span>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" id="progressBar" style="width:0%;"></div>
+            </div>
+            <div id="progressDetail" style="font-size:13px;color:var(--color-text-muted);margin-bottom:10px;"></div>
+            <div class="progress-log" id="progressLog"></div>
+        </div>
+
+        <!-- Firewall Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    Firewall Bilgileri
+                </span>
+                <span class="card-badge">Opsiyonel</span>
+            </div>
+            <p class="help-text mb-sm">
+                Firewall ARP tablosundan MAC &rarr; IP eslesmesi yapilir ve reverse DNS ile hostname cozumlenir.
+                Bos birakilirsa bu adim atlanir.
+            </p>
+            <div class="fw-grid">
+                <div class="form-group">
+                    <label class="form-label">Firewall IP</label>
+                    <input type="text" class="form-input" id="fwHost" placeholder="192.168.1.1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Credential Profili</label>
+                    <select class="form-select" id="fwProfile" onchange="onFwProfileChange()">
+                        <option value="">-- Manuel Giris --</option>
+                    </select>
+                </div>
+            </div>
+            <div id="fwManualCreds" class="fw-creds">
+                <div class="form-group">
+                    <label class="form-label">Kullanici Adi</label>
+                    <input type="text" class="form-input" id="fwUsername" placeholder="admin">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Sifre</label>
+                    <input type="password" class="form-input" id="fwPassword" placeholder="••••••">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Port</label>
+                    <input type="number" class="form-input" id="fwPort" value="22" min="1" max="65535">
+                </div>
+            </div>
+        </div>
+
+        <!-- Result -->
+        <div id="result" style="display:none;">
+            <div class="card">
+                <div id="resultContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile Modal -->
+    <div class="modal-overlay" id="profileModal">
+        <div class="modal">
+            <h3 id="modalTitle">Yeni Profil</h3>
+            <div class="form-group">
+                <label class="form-label">Profil Adi</label>
+                <input type="text" class="form-input" id="profName" placeholder="Orn: DC-Admin">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Kullanici Adi</label>
+                <input type="text" class="form-input" id="profUsername" placeholder="admin">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Sifre</label>
+                <input type="password" class="form-input" id="profPassword" placeholder="••••••">
+            </div>
+            <div class="form-group">
+                <label class="form-label">SSH Port</label>
+                <input type="number" class="form-input" id="profPort" value="22" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cihaz Tipi</label>
+                <select class="form-select" id="profDeviceType">
+                    <option value="arista_eos">Arista EOS (Switch)</option>
+                    <option value="cisco_nxos">Cisco Nexus (Switch)</option>
+                    <option value="paloalto_panos">PAN-OS (Firewall)</option>
+                    <option value="fortinet">FortiGate (Firewall)</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeProfileModal()">Iptal</button>
+                <button class="btn btn-primary" onclick="saveProfile()">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/migration/static/common.js"></script>
+    <script>
+        /* ---- Topbar ---- */
+        document.getElementById('topbar').innerHTML = renderTopbar('collect');
+
+        /* ---- Profile Operations ---- */
+        let profiles = [];
+
+        async function loadProfilesLocal() {
+            const res = await fetch('/migration/api/profiles');
+            profiles = await res.json();
+            renderProfiles();
+            updateProfileSelects();
+        }
+
+        function renderProfiles() {
+            const list = document.getElementById('profileList');
+            const count = document.getElementById('profileCount');
+            count.textContent = profiles.length + ' profil';
+
+            if (profiles.length === 0) {
+                list.innerHTML = '<span class="help-text">Henuz profil eklenmedi.</span>';
+                return;
+            }
+
+            list.innerHTML = profiles.map(p => `
+                <span class="chip">
+                    ${esc(p.name)}
+                    <span class="chip-info">(${esc(p.username)}:${p.port} | ${esc(p.device_type || 'arista_eos')})</span>
+                    <span class="chip-delete" onclick="deleteProfile('${esc(p.name)}')">&times;</span>
+                </span>
+            `).join('');
+        }
+
+        function openProfileModal() {
+            document.getElementById('profName').value = '';
+            document.getElementById('profUsername').value = '';
+            document.getElementById('profPassword').value = '';
+            document.getElementById('profPort').value = '22';
+            document.getElementById('profDeviceType').value = 'arista_eos';
+            document.getElementById('modalTitle').textContent = 'Yeni Profil';
+            document.getElementById('profileModal').classList.add('active');
+        }
+
+        function closeProfileModal() {
+            document.getElementById('profileModal').classList.remove('active');
+        }
+
+        async function saveProfile() {
+            const name = document.getElementById('profName').value.trim();
+            const username = document.getElementById('profUsername').value.trim();
+            const password = document.getElementById('profPassword').value;
+            const port = parseInt(document.getElementById('profPort').value) || 22;
+            const device_type = document.getElementById('profDeviceType').value;
+
+            if (!name || !username || !password) {
+                alert('Tum alanlari doldurunuz.');
+                return;
+            }
+
+            const res = await fetch('/migration/api/profiles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, username, password, port, device_type }),
+            });
+            const data = await res.json();
+            profiles = data.profiles;
+            renderProfiles();
+            updateProfileSelects();
+            closeProfileModal();
+        }
+
+        async function deleteProfile(name) {
+            if (!confirm(`"${name}" profilini silmek istediginize emin misiniz?`)) return;
+            const res = await fetch('/migration/api/profiles/' + encodeURIComponent(name), { method: 'DELETE' });
+            const data = await res.json();
+            profiles = data.profiles;
+            renderProfiles();
+            updateProfileSelects();
+        }
+
+        function getProfileOpts() {
+            let opts = '<option value="">-- Profil Sec --</option>';
+            profiles.forEach(p => {
+                opts += `<option value="${esc(p.name)}">${esc(p.name)} (${esc(p.username)})</option>`;
+            });
+            return opts;
+        }
+
+        function updateProfileSelects() {
+            const opts = getProfileOpts();
+            document.querySelectorAll('.sw-profile').forEach(sel => {
+                const current = sel.value;
+                sel.innerHTML = opts;
+                sel.value = current;
+            });
+            updateFwProfileSelect();
+        }
+
+        function updateFwProfileSelect() {
+            const sel = document.getElementById('fwProfile');
+            if (!sel) return;
+            const current = sel.value;
+            let opts = '<option value="">-- Manuel Giris --</option>';
+            profiles.forEach(p => {
+                opts += `<option value="${esc(p.name)}">${esc(p.name)} (${esc(p.username)})</option>`;
+            });
+            sel.innerHTML = opts;
+            sel.value = current;
+            onFwProfileChange();
+        }
+
+        function onFwProfileChange() {
+            const sel = document.getElementById('fwProfile');
+            const manualDiv = document.getElementById('fwManualCreds');
+            const selected = sel.value;
+
+            if (selected) {
+                const prof = profiles.find(p => p.name === selected);
+                if (prof) {
+                    document.getElementById('fwUsername').value = prof.username;
+                    document.getElementById('fwPassword').value = prof.password;
+                    document.getElementById('fwPort').value = prof.port || 22;
+                }
+                manualDiv.style.display = 'none';
+            } else {
+                manualDiv.style.display = 'grid';
+            }
+        }
+
+        /* ---- Switch Rows ---- */
+        function addSwitch() {
+            const container = document.getElementById('switches');
+            const row = document.createElement('div');
+            row.className = 'entry-row';
+            row.innerHTML = `
+                <div class="form-group">
+                    <label class="form-label">IP Adresi / Range</label>
+                    <input type="text" class="form-input sw-host" placeholder="192.168.1.160-180">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Profil</label>
+                    <select class="form-select sw-profile">${getProfileOpts()}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Port</label>
+                    <input type="number" class="form-input sw-port" placeholder="22" min="1" max="65535">
+                </div>
+                <button class="btn-remove" onclick="removeSwitch(this)" title="Kaldir">&times;</button>
+            `;
+            container.appendChild(row);
+        }
+
+        function removeSwitch(btn) {
+            btn.closest('.entry-row').remove();
+        }
+
+        /* ---- Collection (SSE Progress) ---- */
+        const phaseLabels = {
+            switch: 'Switch Veri Toplama',
+            firewall: 'Firewall ARP Tablosu',
+            dns: 'DNS Cozumleme',
+            excel: 'Excel Olusturma',
+        };
+
+        function resetProgress() {
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('phaseLabel').textContent = 'Hazirlaniyor...';
+            document.getElementById('stepCounter').textContent = '';
+            document.getElementById('progressDetail').textContent = '';
+            document.getElementById('progressLog').innerHTML = '';
+            document.getElementById('result').style.display = 'none';
+        }
+
+        function addLogEntry(message, status) {
+            const log = document.getElementById('progressLog');
+            const spinning = log.querySelector('.log-icon.spin');
+            if (spinning) {
+                spinning.className = 'log-icon ok';
+                spinning.textContent = '\u2713';
+            }
+
+            const icon = status === 'error' ? '\u2717' : (status === 'done' ? '\u2713' : '\u25CB');
+            const iconClass = status === 'error' ? 'err' : (status === 'done' ? 'ok' : 'spin');
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-icon ${iconClass}">${icon}</span><span>${esc(message)}</span>`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function finalizeLogSpinners() {
+            const log = document.getElementById('progressLog');
+            const spinning = log.querySelector('.log-icon.spin');
+            if (spinning) {
+                spinning.className = 'log-icon ok';
+                spinning.textContent = '\u2713';
+            }
+        }
+
+        async function collect() {
+            const rows = document.querySelectorAll('.entry-row');
+            const switches = [];
+
+            rows.forEach(row => {
+                const host = row.querySelector('.sw-host').value.trim();
+                const profile = row.querySelector('.sw-profile').value;
+                const port = row.querySelector('.sw-port').value || '';
+
+                if (host) {
+                    switches.push({ host, profile, port });
+                }
+            });
+
+            if (switches.length === 0) {
+                showResult('error', 'En az bir switch IP adresi giriniz.');
+                return;
+            }
+
+            const fwHost = document.getElementById('fwHost').value.trim();
+            const fwProfileName = document.getElementById('fwProfile').value;
+            let fwUsername, fwPassword, fwPort;
+
+            if (fwProfileName) {
+                const fwProf = profiles.find(p => p.name === fwProfileName);
+                fwUsername = fwProf ? fwProf.username : '';
+                fwPassword = fwProf ? fwProf.password : '';
+                fwPort = fwProf ? String(fwProf.port || 22) : '22';
+            } else {
+                fwUsername = document.getElementById('fwUsername').value.trim();
+                fwPassword = document.getElementById('fwPassword').value;
+                fwPort = document.getElementById('fwPort').value || '22';
+            }
+
+            const payload = { switches };
+            if (fwHost && fwUsername && fwPassword) {
+                payload.firewall = {
+                    host: fwHost,
+                    username: fwUsername,
+                    password: fwPassword,
+                    port: fwPort,
+                };
+            }
+
+            const btn = document.getElementById('collectBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Islem devam ediyor...';
+
+            resetProgress();
+            const panel = document.getElementById('progressPanel');
+            panel.classList.add('active');
+            panel.scrollIntoView({ behavior: 'smooth' });
+
+            try {
+                const response = await fetch('/migration/collect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                    const data = await response.json();
+                    let msg = data.error || 'Bir hata olustu.';
+                    if (data.details && data.details.length > 0) {
+                        msg += '<ul class="error-list">';
+                        data.details.forEach(d => {
+                            msg += `<li><strong>${esc(d.host || '?')}:</strong> ${esc(d.error)}</li>`;
+                        });
+                        msg += '</ul>';
+                    }
+                    panel.classList.remove('active');
+                    showResult('error', msg);
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop();
+
+                    for (const part of parts) {
+                        if (!part.trim()) continue;
+
+                        let eventType = 'message';
+                        let eventData = '';
+
+                        for (const line of part.split('\n')) {
+                            if (line.startsWith('event: ')) {
+                                eventType = line.slice(7);
+                            } else if (line.startsWith('data: ')) {
+                                eventData = line.slice(6);
+                            }
+                        }
+
+                        if (!eventData) continue;
+                        const data = JSON.parse(eventData);
+
+                        if (eventType === 'progress') {
+                            const pct = Math.round((data.step / data.totalSteps) * 100);
+                            document.getElementById('progressBar').style.width = pct + '%';
+                            document.getElementById('phaseLabel').textContent = phaseLabels[data.phase] || data.phase;
+                            document.getElementById('stepCounter').textContent = `${data.step} / ${data.totalSteps}`;
+                            document.getElementById('progressDetail').textContent = data.detail || '';
+                            addLogEntry(data.message, 'active');
+                        }
+
+                        if (eventType === 'switch_ok') {
+                            finalizeLogSpinners();
+                            addLogEntry(`${data.host} — ${data.port_count} kayit alindi`, 'done');
+                        }
+
+                        if (eventType === 'switch_error') {
+                            finalizeLogSpinners();
+                            addLogEntry(`${data.host} — ${data.error}`, 'error');
+                        }
+
+                        if (eventType === 'error') {
+                            finalizeLogSpinners();
+                            addLogEntry('Hata: ' + data.error, 'error');
+                            let msg = data.error;
+                            if (data.details && data.details.length > 0) {
+                                msg += '<ul class="error-list">';
+                                data.details.forEach(d => {
+                                    msg += `<li><strong>${esc(d.host || '?')}:</strong> ${esc(d.error)}</li>`;
+                                });
+                                msg += '</ul>';
+                            }
+                            showResult('error', msg);
+                        }
+
+                        if (eventType === 'done') {
+                            finalizeLogSpinners();
+                            document.getElementById('progressBar').style.width = '100%';
+                            document.getElementById('phaseLabel').textContent = 'Tamamlandi!';
+                            document.getElementById('progressDetail').textContent = '';
+                            addLogEntry('Excel dosyasi hazir', 'done');
+
+                            window._lastCollectData = data;
+                            try {
+                                localStorage.setItem('lastCollectPorts', JSON.stringify(data.ports || []));
+                                localStorage.setItem('lastCollectTopology', JSON.stringify(data.topology || []));
+                                localStorage.setItem('lastCollectTime', new Date().toISOString());
+                                localStorage.setItem('lastCollectFile', data.filename || '');
+                            } catch (e) { /* localStorage may be full */ }
+
+                            let html = `
+                                <div class="alert alert-success">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                    Toplam <strong>${data.total_ports}</strong> port bilgisi toplandi.
+                                </div>
+                                <div class="result-actions">
+                                    <a href="/migration/download/${encodeURIComponent(data.filename)}" class="download-link">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                        Excel Dosyasini Indir
+                                    </a>
+                                    <button class="btn btn-primary" onclick="saveAsBaseline()">
+                                        Baseline Olarak Kaydet
+                                    </button>
+                                </div>
+                            `;
+
+                            if (data.topology && data.topology.length > 0) {
+                                html += `
+                                    <div class="alert alert-info">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                                        <strong>Topology:</strong> ${data.topology.length} uplink baglantisi tespit edildi.
+                                        <a href="/migration/dashboard" style="margin-left:8px; color:var(--color-info-dark);">Dashboard'da detayli goruntule &rarr;</a>
+                                    </div>
+                                `;
+                            }
+
+                            if (data.errors && data.errors.length > 0) {
+                                html += `
+                                    <div class="alert alert-warning">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                        Bazi switchlerde hata olustu:
+                                        <ul class="error-list">
+                                            ${data.errors.map(e =>
+                                                `<li><strong>${esc(e.host)}:</strong> ${esc(e.error)}</li>`
+                                            ).join('')}
+                                        </ul>
+                                    </div>
+                                `;
+                            }
+                            showResult('success', html);
+                        }
+                    }
+                }
+            } catch (err) {
+                finalizeLogSpinners();
+                addLogEntry('Baglanti kesildi: ' + err.message, 'error');
+
+                let errorMsg = '<strong>Sunucu baglanti hatasi</strong><br>';
+                if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
+                    errorMsg += 'Flask sunucusuna erisilemyor. Olasi nedenler:';
+                    errorMsg += '<ul class="error-list">';
+                    errorMsg += '<li>Flask uygulamasi calismyor olabilir (<code>python app.py</code>)</li>';
+                    errorMsg += '<li>Sunucu islem sirasinda cokmis olabilir (terminali kontrol edin)</li>';
+                    errorMsg += '<li>Istek cok uzun surdu ve tarayici baglantiyi kapatti</li>';
+                    errorMsg += '</ul>';
+                } else {
+                    errorMsg += esc(err.message);
+                }
+                showResult('error', errorMsg);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Topla ve Excel Indir';
+            }
+        }
+
+        async function saveAsBaseline() {
+            const data = window._lastCollectData;
+            if (!data) { alert('Kaydedilecek veri yok.'); return; }
+
+            const label = prompt('Baseline etiketi:', `Tasima Oncesi — ${new Date().toLocaleDateString('tr-TR')}`);
+            if (label === null) return;
+
+            try {
+                const res = await fetch('/migration/api/baseline/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        label: label,
+                        ports: data.ports || [],
+                        topology: data.topology || [],
+                    }),
+                });
+                const result = await res.json();
+                if (res.ok) {
+                    alert('Baseline kaydedildi: ' + result.label);
+                } else {
+                    alert('Hata: ' + (result.error || 'Bilinmeyen'));
+                }
+            } catch (err) {
+                alert('Baseline kayit hatasi: ' + err.message);
+            }
+        }
+
+        function showResult(type, html) {
+            const result = document.getElementById('result');
+            const content = document.getElementById('resultContent');
+            content.innerHTML = html;
+            result.style.display = 'block';
+            result.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        /* ---- Switch Group (Collect) ---- */
+        async function loadGroupsCollect() {
+            await loadSwitchGroups();
+            document.getElementById('groupSelectCollect').innerHTML = getSwitchGroupOptions();
+        }
+
+        function onGroupSelectCollect() {
+            const name = document.getElementById('groupSelectCollect').value;
+            if (!name) return;
+            const group = getSwitchGroupByName(name);
+            if (!group) return;
+
+            document.getElementById('switches').innerHTML = '';
+            for (const sw of group.switches) {
+                addSwitch();
+                const rows = document.querySelectorAll('.entry-row');
+                const row = rows[rows.length - 1];
+                row.querySelector('.sw-host').value = sw.host || '';
+                if (sw.profile) {
+                    const sel = row.querySelector('.sw-profile');
+                    sel.value = sw.profile;
+                }
+                if (sw.port) row.querySelector('.sw-port').value = sw.port;
+            }
+        }
+
+        /* ---- Init ---- */
+        loadProfilesLocal().then(() => {
+            addSwitch();
+            loadGroupsCollect();
+        });
+
+        document.getElementById('profileModal').addEventListener('click', function(e) {
+            if (e.target === this) closeProfileModal();
+        });
+    </script>
+</body>
+</html>

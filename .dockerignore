@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+.git
+.gitignore
+data/
+exports/
+baselines/
+profiles.json
+audit_log.json
+webhooks.json
+*.db
+.cache/
+.env
